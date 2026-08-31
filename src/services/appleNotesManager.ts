@@ -242,6 +242,23 @@ export function sanitizeId(id: string): string {
 }
 
 /**
+ * Validates a real Apple Note identity for any operation that targets a note.
+ *
+ * Generic CoreData IDs and historical `temp-*` fallbacks are intentionally
+ * rejected. A synthetic identity is not safe enough for a write because it
+ * cannot name one exact object in Notes.app.
+ */
+export function sanitizeNoteId(id: string): string {
+  const noteIdPattern = /^x-coredata:\/\/[0-9A-Fa-f-]+\/ICNote\/p\d+$/;
+  if (!noteIdPattern.test(id)) {
+    throw new Error(
+      `Invalid note ID format: "${id.substring(0, 80)}". Expected canonical Apple Note ID (x-coredata://.../ICNote/p...).`
+    );
+  }
+  return escapeForAppleScript(id);
+}
+
+/**
  * Sanitizes an account name for safe embedding in AppleScript.
  *
  * @param account - Account name string
@@ -919,12 +936,27 @@ export class AppleNotesManager {
     // Strip that prefix so we return the bare x-coredata:// URL that the id
     // validator and downstream tools (get-note-content, update-note) accept.
     const rawOutput = result.output.trim();
+    // Notes.app returns either `note id x-coredata://...` or the bare URL,
+    // depending on the account/context. Accept only those two canonical forms.
     const noteId = extractCoreDataId(rawOutput, "note") || rawOutput;
+    if (!noteId) {
+      // The note may exist even when AppleScript returned an unexpected object
+      // specifier. Fail closed instead of handing out a synthetic or unverified
+      // identity that a later mutation could mis-target.
+      console.error(`Created note "${title}" but Notes.app returned no canonical note ID`);
+      return null;
+    }
+    try {
+      sanitizeNoteId(noteId);
+    } catch {
+      console.error(`Created note "${title}" but Notes.app returned an invalid note ID`);
+      return null;
+    }
 
     // Return a Note object representing the created note with real ID
     const now = new Date();
     return {
-      id: noteId || generateFallbackId(), // Use real ID, fallback to unique temp ID
+      id: noteId,
       title,
       content,
       tags,
@@ -1311,173 +1343,94 @@ export class AppleNotesManager {
   }
 
   /**
-   * Deletes a note by its title.
+   * Replaces one exact note body only if the body is still the snapshot the
+   * caller reviewed and the note has no attachments.
    *
-   * Note: This permanently deletes the note. It may be recoverable
-   * from the "Recently Deleted" folder in Notes.app.
-   *
-   * @param title - Exact title of the note to delete
-   * @param account - Account containing the note (defaults to Notes.app's default account)
-   * @returns true if deletion succeeded, false otherwise
+   * Both guards and the write execute inside one AppleScript. This closes the
+   * race that would exist if JavaScript checked the note and then issued a
+   * separate unconditional `set body` command.
    */
-  deleteNote(title: string, account?: string): boolean {
-    const targetAccount = this.resolveAccount(account);
-    const safeTitle = escapePlainStringForAppleScript(title);
-
-    const deleteCommand = `delete note "${safeTitle}"`;
-    const script = buildAccountScopedScript({ account: targetAccount }, deleteCommand);
-    const result = executeMutationAppleScript(script);
-
-    if (!result.success) {
-      throwIfAccountResolutionFailed(result.error);
-      console.error(`Failed to delete note "${title}":`, result.error);
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Deletes a note by its CoreData ID.
-   *
-   * This is more reliable than deleteNote() because IDs are unique
-   * across all accounts, while titles can be duplicated.
-   *
-   * @param id - CoreData URL identifier for the note
-   * @returns true if deletion succeeded, false otherwise
-   */
-  deleteNoteById(id: string): boolean {
-    const safeId = sanitizeId(id);
-    const deleteCommand = `delete note id "${safeId}"`;
-    const script = buildAppLevelScript(deleteCommand);
-    const result = executeMutationAppleScript(script);
-
-    if (!result.success) {
-      console.error(`Failed to delete note with ID "${id}":`, result.error);
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Updates an existing note's content and optionally its title.
-   *
-   * Apple Notes derives the title from the first line of the body,
-   * so updating content also allows title changes. If newTitle is
-   * not provided, the original title is preserved.
-   *
-   * When format is 'html', newTitle is ignored — the caller must include
-   * the title in the HTML content.
-   *
-   * Note: Password-protected notes will fail with an AppleScript error.
-   * Callers should check for password protection beforehand using
-   * getNoteDetails() or isNotePasswordProtected().
-   *
-   * @param title - Current title of the note to update
-   * @param newTitle - New title (optional, keeps existing if not provided; ignored in html format)
-   * @param newContent - New content for the note body
-   * @param account - Account containing the note (defaults to Notes.app's default account)
-   * @param format - Content format: "plaintext" wraps in div tags (default), "html" uses content as-is
-   * @returns true if update succeeded, false otherwise
-   */
-  updateNote(
-    title: string,
-    newTitle: string | undefined,
-    newContent: string,
-    account?: string,
-    format: "plaintext" | "html" = "plaintext"
-  ): boolean {
-    if (newTitle) validateLength(newTitle, MAX_TITLE_LENGTH, "Note title");
-    validateLength(newContent, MAX_CONTENT_LENGTH, "Note content");
-    const targetAccount = this.resolveAccount(account);
-    const safeCurrentTitle = escapePlainStringForAppleScript(title);
-
-    let fullBody: string;
-    if (format === "html") {
-      // HTML mode: content is the complete body, escaped only for AppleScript string
-      fullBody = escapeHtmlForAppleScript(newContent);
-    } else {
-      // Plaintext mode: wrap title + content in <div> tags (existing behavior)
-      const effectiveTitle = newTitle || title;
-      const safeEffectiveTitle = escapeForAppleScript(effectiveTitle);
-      const safeContent = escapeForAppleScript(newContent);
-      fullBody = `<div>${safeEffectiveTitle}</div><div>${safeContent}</div>`;
-    }
-
-    const updateCommand = `set body of note "${safeCurrentTitle}" to "${fullBody}"`;
-    const script = buildAccountScopedScript({ account: targetAccount }, updateCommand);
-    const result = executeMutationAppleScript(script);
-
-    if (!result.success) {
-      throwIfAccountResolutionFailed(result.error);
-      console.error(`Failed to update note "${title}":`, result.error);
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Updates an existing note by its CoreData ID.
-   *
-   * This is more reliable than updateNote() because IDs are unique,
-   * while titles can be duplicated.
-   *
-   * When format is 'html', newTitle is ignored — the caller must include
-   * the title in the HTML content.
-   *
-   * Note: Password-protected notes will fail with an AppleScript error.
-   * Callers should check for password protection beforehand using
-   * getNoteById() or isNotePasswordProtectedById().
-   *
-   * @param id - CoreData URL identifier for the note
-   * @param newTitle - New title (optional, keeps existing if not provided; ignored in html format)
-   * @param newContent - New content for the note body
-   * @param format - Content format: "plaintext" wraps in div tags (default), "html" uses content as-is
-   * @returns true if update succeeded, false otherwise
-   */
-  updateNoteById(
+  updateNoteByIdIfUnchanged(
     id: string,
+    currentTitle: string,
+    expectedBody: string,
     newTitle: string | undefined,
     newContent: string,
     format: "plaintext" | "html" = "plaintext"
-  ): boolean {
+  ):
+    { status: "updated"; writtenBody: string } | { status: "conflict" | "attachments" | "failed" } {
+    const safeId = sanitizeNoteId(id);
     if (newTitle) validateLength(newTitle, MAX_TITLE_LENGTH, "Note title");
     validateLength(newContent, MAX_CONTENT_LENGTH, "Note content");
-    let fullBody: string;
-    if (format === "html") {
-      // HTML mode: content is the complete body, escaped only for AppleScript string
-      fullBody = escapeHtmlForAppleScript(newContent);
-    } else {
-      // Plaintext mode: wrap title + content in <div> tags (existing behavior)
-      // Get the note to retrieve current title if newTitle not provided
-      let effectiveTitle = newTitle;
-      if (!effectiveTitle) {
-        const note = this.getNoteById(id);
-        if (!note) {
-          console.error(`Cannot update note: note with ID "${id}" not found`);
-          return false;
-        }
-        effectiveTitle = note.title;
-      }
+    validateLength(expectedBody, MAX_CONTENT_LENGTH, "Expected note content");
 
-      const safeEffectiveTitle = escapeForAppleScript(effectiveTitle);
-      const safeContent = escapeForAppleScript(newContent);
-      fullBody = `<div>${safeEffectiveTitle}</div><div>${safeContent}</div>`;
+    // Keep the unescaped form for exact-ID post-write verification. Escape only
+    // at the AppleScript boundary so the comparison reflects Notes.app's body.
+    let writtenBody: string;
+    if (format === "html") {
+      writtenBody = newContent;
+    } else {
+      const effectiveTitle = newTitle || currentTitle;
+      const encodePlaintext = (value: string): string =>
+        escapeForAppleScript(value).replace(/\\"/g, '"');
+      writtenBody = `<div>${encodePlaintext(effectiveTitle)}</div><div>${encodePlaintext(newContent)}</div>`;
     }
 
-    const safeId = sanitizeId(id);
-    const updateCommand = `set body of note id "${safeId}" to "${fullBody}"`;
-    const script = buildAppLevelScript(updateCommand);
+    const safeExpectedBody = escapeHtmlForAppleScript(expectedBody);
+    const safeWrittenBody = escapeHtmlForAppleScript(writtenBody);
+    const script = buildAppLevelScript(`
+      set noteRef to note id "${safeId}"
+      if (count of attachments of noteRef) is greater than 0 then return "SAFETY_ATTACHMENTS"
+      set currentBody to body of noteRef
+      considering case
+        if currentBody is not "${safeExpectedBody}" and currentBody is not "${safeExpectedBody}" & linefeed then return "SAFETY_CONFLICT"
+        set body of noteRef to "${safeWrittenBody}"
+      end considering
+      return "SAFETY_UPDATED"
+    `);
     const result = executeMutationAppleScript(script);
 
     if (!result.success) {
-      console.error(`Failed to update note with ID "${id}":`, result.error);
-      return false;
+      console.error(`Failed guarded update for note ID "${id}":`, result.error);
+      return { status: "failed" };
     }
+    const status = result.output.trim();
+    if (status === "SAFETY_CONFLICT") return { status: "conflict" };
+    if (status === "SAFETY_ATTACHMENTS") return { status: "attachments" };
+    if (status !== "SAFETY_UPDATED") return { status: "failed" };
+    return { status: "updated", writtenBody };
+  }
 
-    return true;
+  /**
+   * Deletes one exact note only when its complete body still matches the body
+   * the caller reviewed. The comparison and delete are one AppleScript action,
+   * so a concurrent edit cannot slip between the guard and deletion.
+   */
+  deleteNoteByIdIfUnchanged(
+    id: string,
+    expectedBody: string
+  ): { status: "deleted" | "conflict" | "failed" } {
+    const safeId = sanitizeNoteId(id);
+    validateLength(expectedBody, MAX_CONTENT_LENGTH, "Expected note content");
+    const safeExpectedBody = escapeHtmlForAppleScript(expectedBody);
+    const script = buildAppLevelScript(`
+      set noteRef to note id "${safeId}"
+      set currentBody to body of noteRef
+      considering case
+        if currentBody is not "${safeExpectedBody}" and currentBody is not "${safeExpectedBody}" & linefeed then return "SAFETY_CONFLICT"
+        delete noteRef
+      end considering
+      return "SAFETY_DELETED"
+    `);
+    const result = executeMutationAppleScript(script);
+
+    if (!result.success) {
+      console.error(`Failed guarded delete for note ID "${id}":`, result.error);
+      return { status: "failed" };
+    }
+    const status = result.output.trim();
+    if (status === "SAFETY_CONFLICT") return { status: "conflict" };
+    return status === "SAFETY_DELETED" ? { status: "deleted" } : { status: "failed" };
   }
 
   /**
@@ -1966,38 +1919,6 @@ export class AppleNotesManager {
   }
 
   /**
-   * Moves a note to a different folder, looked up by title.
-   *
-   * Uses Notes.app's native `move` command (the same one `batchMoveNotes`
-   * uses), which relocates the note in place — preserving its identity, id,
-   * creation date, AND all embedded attachments (files/images/PDFs/scans/audio).
-   * The previous copy-then-delete implementation rebuilt the note from its body
-   * HTML, which silently dropped attachments and reset the note's identity.
-   *
-   * The note is resolved to its id first (titles can be duplicated), then moved
-   * by id so the title-based and id-based paths share the same native move.
-   *
-   * @param title - Title of the note to move
-   * @param destinationFolder - Name of the folder to move to (must already exist)
-   * @param account - Account containing the note (defaults to Notes.app's default account)
-   * @returns true if the move succeeded, false otherwise
-   */
-  moveNote(title: string, destinationFolder: string, account?: string): boolean {
-    const targetAccount = this.resolveAccount(account);
-
-    // Resolve the note's id first (titles can be duplicated), then delegate to
-    // the id-based native move so both paths preserve attachments + identity.
-    const originalNote = this.getNoteDetails(title, targetAccount);
-
-    if (!originalNote) {
-      console.error(`Cannot move note "${title}": note not found`);
-      return false;
-    }
-
-    return this.moveNoteById(originalNote.id, destinationFolder, targetAccount);
-  }
-
-  /**
    * Moves a note to a different folder by its CoreData ID.
    *
    * Uses Notes.app's native `move <noteRef> to <destFolder>` command — the same
@@ -2012,7 +1933,7 @@ export class AppleNotesManager {
    */
   moveNoteById(id: string, destinationFolder: string, account?: string): boolean {
     const targetAccount = this.resolveAccount(account);
-    const safeId = sanitizeId(id);
+    const safeId = sanitizeNoteId(id);
     // buildFolderReference validates the destination path; a malformed folder is
     // a precondition error, so let it throw. The destination folder must already
     // exist — Notes.app's `move` does not create it.
@@ -2023,6 +1944,10 @@ export class AppleNotesManager {
       set destFolder to ${destFolderRef}
       set noteRef to note id "${safeId}"
       move noteRef to destFolder
+      set movedNoteRef to note id "${safeId}"
+      set actualFolder to container of movedNoteRef
+      if (id of actualFolder) is not (id of destFolder) then return "SAFETY_WRONG_FOLDER"
+      return "SAFETY_MOVED"
     `;
     const script = buildAppLevelScript(moveCommand);
     const result = executeMutationAppleScript(script);
@@ -2032,6 +1957,13 @@ export class AppleNotesManager {
       console.error(
         `Cannot move note to "${destinationFolder}" (folder may not exist):`,
         result.error
+      );
+      return false;
+    }
+
+    if (result.output.trim() !== "SAFETY_MOVED") {
+      console.error(
+        `Move result for note ID "${id}" did not verify destination "${destinationFolder}"`
       );
       return false;
     }
@@ -2974,111 +2906,9 @@ export class AppleNotesManager {
   }
 
   /**
-   * Deletes multiple notes by their IDs.
-   *
-   * Each deletion is attempted independently; failures don't stop other deletions.
-   * Returns results for each note indicating success or failure.
-   *
-   * @param ids - Array of CoreData URL identifiers for notes to delete
-   * @returns Array of results with id, success status, and optional error message
-   *
-   * @example
-   * ```typescript
-   * const results = manager.batchDeleteNotes([
-   *   "x-coredata://ABC/ICNote/p1",
-   *   "x-coredata://ABC/ICNote/p2"
-   * ]);
-   * results.forEach(r => {
-   *   if (r.success) console.log(`Deleted ${r.id}`);
-   *   else console.log(`Failed to delete ${r.id}: ${r.error}`);
-   * });
-   * ```
-   */
-  batchDeleteNotes(ids: string[]): { id: string; success: boolean; error?: string }[] {
-    if (ids.length === 0) return [];
-
-    // Collapse the whole batch into ONE osascript spawn (#26): a single
-    // app-level script loops over every id, with a per-id `try` so one bad note
-    // can't abort the rest. The old path spawned 3 processes per note
-    // (getNoteById + isNotePasswordProtectedById + deleteNoteById) — i.e. 3N
-    // spawns for N notes. This is one spawn total, with the same per-item
-    // isolation and result semantics.
-    const results: { id: string; success: boolean; error?: string }[] = new Array(ids.length);
-    const runnable: { index: number; safe: string }[] = [];
-
-    ids.forEach((id, i) => {
-      try {
-        runnable.push({ index: i, safe: sanitizeId(id) });
-      } catch (e) {
-        results[i] = this.createBatchResult(
-          id,
-          false,
-          e instanceof Error ? e.message : "Invalid note ID"
-        );
-      }
-    });
-
-    if (runnable.length > 0) {
-      const idList = runnable.map((r) => `"${r.safe}"`).join(", ");
-      const script = buildAppLevelScript(`
-        set out to ""
-        repeat with rawId in {${idList}}
-          set theId to (rawId as text)
-          set noteRef to missing value
-          try
-            set noteRef to note id theId
-          end try
-          if noteRef is missing value then
-            set out to out & "missing" & ${AS_RECORD_SEP}
-          else
-            set isPw to false
-            try
-              set isPw to (password protected of noteRef)
-            end try
-            if isPw then
-              set out to out & "pw" & ${AS_RECORD_SEP}
-            else
-              try
-                delete noteRef
-                set out to out & "ok" & ${AS_RECORD_SEP}
-              on error
-                set out to out & "fail" & ${AS_RECORD_SEP}
-              end try
-            end if
-          end if
-        end repeat
-        return out
-      `);
-      const res = executeMutationAppleScript(script);
-
-      if (!res.success) {
-        // Whole-batch failure (e.g. Notes.app not responding): can't isolate,
-        // so mark every runnable note as failed with the underlying error.
-        for (const r of runnable) {
-          results[r.index] = this.createBatchResult(
-            ids[r.index],
-            false,
-            res.error ?? "Batch delete failed"
-          );
-        }
-      } else {
-        const statuses = res.output
-          .split(RECORD_SEP)
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0);
-        runnable.forEach((r, k) => {
-          results[r.index] = this.mapBatchStatus(ids[r.index], statuses[k], "delete");
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /**
    * Maps a per-item status token emitted by a batch AppleScript loop to a
    * BatchResult, preserving the human-readable error messages of the original
-   * per-note implementation. See {@link batchDeleteNotes} / {@link batchMoveNotes}.
+   * per-note implementation. See {@link batchMoveNotes}.
    */
   private mapBatchStatus(
     id: string,
@@ -3098,6 +2928,8 @@ export class AppleNotesManager {
           false,
           op === "delete" ? "Deletion failed" : "Move failed"
         );
+      case "wrongfolder":
+        return this.createBatchResult(id, false, "Destination folder verification failed");
       default:
         return this.createBatchResult(id, false, "Unknown error");
     }
@@ -3178,7 +3010,13 @@ export class AppleNotesManager {
             else
               try
                 move noteRef to destFolder
-                set out to out & "ok" & ${AS_RECORD_SEP}
+                set movedNoteRef to note id theId
+                set actualFolder to container of movedNoteRef
+                if (id of actualFolder) is (id of destFolder) then
+                  set out to out & "ok" & ${AS_RECORD_SEP}
+                else
+                  set out to out & "wrongfolder" & ${AS_RECORD_SEP}
+                end if
               on error
                 set out to out & "fail" & ${AS_RECORD_SEP}
               end try

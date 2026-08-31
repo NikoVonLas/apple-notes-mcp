@@ -1,6 +1,33 @@
 ## [Unreleased]
 
+## [2.8.0] - 2026-08-28
+
 ### Changed
+
+- **Mutations now target exact note IDs and reject stale or attachment-bearing
+  rewrites.** `update-note`, `append-to-note`, and `delete-note` require the
+  `contentHash` returned by `get-note-content`; title-only mutation is no longer
+  accepted. The complete-body comparison and write/delete happen in one
+  no-retry AppleScript transaction, compared with `considering case` (plain
+  AppleScript string comparison is case-insensitive by default, which would
+  let a case-only concurrent edit slip past the guard), so a newer edit cannot
+  be silently replaced between checking and saving. Update and append refuse notes with attachments,
+  then reread the same ID and report the post-save hash plus
+  `verifiedVisibleText` (Apple Notes normalizes HTML, so byte-identical rich
+  formatting is not claimed). `move-note` requires the exact ID and verifies the
+  actual destination folder ID before reporting success. `create-note` no
+  longer invents a temporary ID when Notes.app does not return a canonical one.
+  `batch-delete-notes` now takes reviewed `{id, expectedContentHash}` snapshots
+  and spawns one guarded AppleScript per note instead of one script for the
+  whole batch, since each note needs its own body-revision check; a max-size
+  (500-note) batch now costs 500 spawns instead of 1. Proved with
+  duplicate-title, stale-writer, attachment, and destination-folder
+  disposable-note tests against Notes.app, plus the complete unit and live
+  integration suites. Also removes the pre-hardening unguarded mutation
+  methods (`deleteNote`, `deleteNoteById`, `updateNote`, `updateNoteById`,
+  `moveNote`, the single-script `batchDeleteNotes`) — dead code once every
+  tool moved to the guarded equivalents, and the exact class of unsafe
+  mutation this release closes.
 
 - **Supply-chain soak raised from 1 day to 7 days** (`minimumReleaseAge: 10080` in
   `pnpm-workspace.yaml`). This is a development/CI-time policy — no shipped bytes change.

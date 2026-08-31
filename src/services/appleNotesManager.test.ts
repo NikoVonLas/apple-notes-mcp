@@ -24,6 +24,7 @@ import {
   splitFolderPath,
   parseAppleScriptDate,
   sanitizeId,
+  sanitizeNoteId,
 } from "./appleNotesManager.js";
 
 // Mock the AppleScript execution module
@@ -480,27 +481,28 @@ describe("AppleNotesManager", () => {
           'AccountResolutionError: Account "rob" is ambiguous - it matches 2 accounts: rob@a, rob@b. Use the full account name.',
       });
 
-      // deleteNote normally swallows failures into `false`; an unresolvable
+      // deleteFolder normally swallows failures into `false`; an unresolvable
       // account must surface instead, or the caller goes hunting for a missing
-      // note that was never the problem.
-      expect(() => manager.deleteNote("Doomed", "rob")).toThrow(/is ambiguous/);
-      expect(() => manager.deleteNote("Doomed", "rob")).not.toThrow(/AccountResolutionError/);
+      // folder that was never the problem. (Same resolveAccount() path every
+      // account-scoped destructive method uses.)
+      expect(() => manager.deleteFolder("Doomed", "rob")).toThrow(/is ambiguous/);
+      expect(() => manager.deleteFolder("Doomed", "rob")).not.toThrow(/AccountResolutionError/);
     });
 
     it("still swallows a genuine operation failure into false", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: false,
         output: "",
-        error: 'Can\'t get note "Doomed".',
+        error: 'Can\'t get folder "Doomed".',
       });
 
-      expect(manager.deleteNote("Doomed", "iCloud")).toBe(false);
+      expect(manager.deleteFolder("Doomed", "iCloud")).toBe(false);
     });
 
-    it("resolves the account for destructive paths too (deleteNote, batch move)", () => {
+    it("resolves the account for destructive paths too (deleteFolder, batch move)", () => {
       mockExecuteAppleScript.mockReturnValue({ success: true, output: "" });
 
-      manager.deleteNote("Doomed", "rob");
+      manager.deleteFolder("Doomed", "rob");
       const deleteScript = String(mockExecuteAppleScript.mock.calls.at(-1)?.[0]);
       expect(deleteScript).toContain("is ambiguous");
       expect(deleteScript).not.toContain("first account whose name starts with");
@@ -583,6 +585,23 @@ describe("AppleNotesManager", () => {
       expect(result?.id).not.toMatch(/^note id /);
     });
 
+    it("accepts the bare canonical ID form returned by some Notes accounts", () => {
+      mockExecuteAppleScript.mockReturnValue({
+        success: true,
+        output: "x-coredata://ABC-DEF/ICNote/p43",
+      });
+
+      expect(manager.createNote("Bare ID", "Body")?.id).toBe("x-coredata://ABC-DEF/ICNote/p43");
+    });
+
+    it("fails closed when Notes does not return a real CoreData note ID", () => {
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "note 1 of folder Notes" });
+
+      const result = manager.createNote("No writable identity", "Body");
+
+      expect(result).toBeNull();
+    });
+
     it("returned id round-trips through get-note-content and update-note (#create-note-id)", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: true,
@@ -597,8 +616,10 @@ describe("AppleNotesManager", () => {
       expect(() => manager.getNoteContentById(id)).not.toThrow();
 
       // Updating by the returned id must not throw either.
-      mockExecuteAppleScript.mockReturnValue({ success: true, output: "" });
-      expect(() => manager.updateNoteById(id, undefined, "New body")).not.toThrow();
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "SAFETY_UPDATED" });
+      expect(() =>
+        manager.updateNoteByIdIfUnchanged(id, "Roundtrip", "<div>Body</div>", undefined, "New body")
+      ).not.toThrow();
     });
 
     it("returns null when AppleScript fails", () => {
@@ -616,7 +637,7 @@ describe("AppleNotesManager", () => {
     it("uses specified account instead of default", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: true,
-        output: "note id x-coredata://...",
+        output: "note id x-coredata://ABC/ICNote/p201",
       });
 
       const result = manager.createNote("Draft", "Email content", [], undefined, "Gmail");
@@ -631,7 +652,7 @@ describe("AppleNotesManager", () => {
     it("creates note in specified folder", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: true,
-        output: "note id x-coredata://...",
+        output: "note id x-coredata://ABC/ICNote/p202",
       });
 
       manager.createNote("Work Note", "Content", [], "Work Projects");
@@ -645,7 +666,7 @@ describe("AppleNotesManager", () => {
     it("stores tags in returned Note object", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: true,
-        output: "note id x-coredata://...",
+        output: "note id x-coredata://ABC/ICNote/p203",
       });
 
       const result = manager.createNote("Tagged Note", "Content", ["work", "urgent"]);
@@ -1435,212 +1456,90 @@ describe("AppleNotesManager", () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Note Deletion
-  // ---------------------------------------------------------------------------
+  describe("updateNoteByIdIfUnchanged", () => {
+    const id = "x-coredata://ABC00000-0000-0000-0000-000000000003/ICNote/p789";
+    const oldBody = "<div>Title</div><div>Old body</div>";
 
-  describe("deleteNote", () => {
-    it("returns true on successful deletion", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: true,
-        output: "",
-      });
+    it("checks body identity and attachments in the same AppleScript before writing", () => {
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "SAFETY_UPDATED" });
 
-      const result = manager.deleteNote("Old Note");
+      const result = manager.updateNoteByIdIfUnchanged(id, "Title", oldBody, undefined, "New body");
 
-      expect(result).toBe(true);
-    });
-
-    it("returns false when deletion fails", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: false,
-        output: "",
-        error: "Cannot delete protected note",
-      });
-
-      const result = manager.deleteNote("Protected Note");
-
-      expect(result).toBe(false);
-    });
-
-    it("uses specified account", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: true,
-        output: "",
-      });
-
-      manager.deleteNote("Draft", "Gmail");
-
-      expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining('every account whose name is "Gmail"'),
-        NO_RETRY_OPTIONS
+      expect(result.status).toBe("updated");
+      expect(result.writtenBody).toBe("<div>Title</div><div>New body</div>");
+      const script = String(mockExecuteAppleScript.mock.calls[0]?.[0]);
+      expect(script).toContain("count of attachments of noteRef");
+      expect(script).toContain("currentBody is not");
+      expect(script).toContain(
+        'currentBody is not "<div>Title</div><div>Old body</div>" & linefeed'
       );
+      expect(script.indexOf("count of attachments of noteRef")).toBeLessThan(
+        script.indexOf("set body of noteRef")
+      );
+      expect(script.indexOf("currentBody is not")).toBeLessThan(
+        script.indexOf("set body of noteRef")
+      );
+      // AppleScript's `is`/`is not` is case-insensitive by default, so a
+      // case-only concurrent edit would otherwise slip past the conflict
+      // guard. `considering case` must wrap the comparison (and the write,
+      // so a false-equal never reaches `set body of noteRef`).
+      expect(script.indexOf("considering case")).toBeLessThan(script.indexOf("currentBody is not"));
+      expect(script.indexOf("set body of noteRef")).toBeLessThan(script.indexOf("end considering"));
+      expect(mockExecuteAppleScript).toHaveBeenCalledWith(expect.any(String), NO_RETRY_OPTIONS);
+    });
+
+    it("reports a conflict without claiming an update", () => {
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "SAFETY_CONFLICT" });
+
+      const result = manager.updateNoteByIdIfUnchanged(
+        id,
+        "Title",
+        oldBody,
+        undefined,
+        "Stale body"
+      );
+
+      expect(result).toEqual({ status: "conflict" });
+    });
+
+    it("reports attachments without claiming an update", () => {
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "SAFETY_ATTACHMENTS" });
+
+      const result = manager.updateNoteByIdIfUnchanged(
+        id,
+        "Title",
+        oldBody,
+        undefined,
+        "Replacement"
+      );
+
+      expect(result).toEqual({ status: "attachments" });
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Note Updates
-  // ---------------------------------------------------------------------------
+  describe("deleteNoteByIdIfUnchanged", () => {
+    const id = "x-coredata://ABC00000-0000-0000-0000-000000000004/ICNote/p790";
 
-  describe("updateNote", () => {
-    it("returns true on successful update", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: true,
-        output: "",
-      });
+    it("compares the exact body in the same AppleScript before deleting", () => {
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "SAFETY_DELETED" });
 
-      const result = manager.updateNote("Old Title", "New Title", "Updated content");
+      const result = manager.deleteNoteByIdIfUnchanged(id, "<div>Reviewed body</div>");
 
-      expect(result).toBe(true);
+      expect(result.status).toBe("deleted");
+      const script = String(mockExecuteAppleScript.mock.calls[0]?.[0]);
+      expect(script).toContain("currentBody is not");
+      expect(script.indexOf("currentBody is not")).toBeLessThan(script.indexOf("delete noteRef"));
+      expect(script.indexOf("considering case")).toBeLessThan(script.indexOf("currentBody is not"));
+      expect(script.indexOf("delete noteRef")).toBeLessThan(script.indexOf("end considering"));
+      expect(mockExecuteAppleScript).toHaveBeenCalledWith(expect.any(String), NO_RETRY_OPTIONS);
     });
 
-    it("returns false when update fails", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: false,
-        output: "",
-        error: "Note not found",
+    it("rejects deletion when the reviewed body is stale", () => {
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "SAFETY_CONFLICT" });
+
+      expect(manager.deleteNoteByIdIfUnchanged(id, "<div>Old body</div>")).toEqual({
+        status: "conflict",
       });
-
-      const result = manager.updateNote("Missing", "New Title", "Content");
-
-      expect(result).toBe(false);
-    });
-
-    it("preserves original title when newTitle is undefined", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: true,
-        output: "",
-      });
-
-      manager.updateNote("Keep This Title", undefined, "New content only");
-
-      // The generated body should use the original title
-      expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("<div>Keep This Title</div>"),
-        NO_RETRY_OPTIONS
-      );
-    });
-
-    it("uses new title when provided", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: true,
-        output: "",
-      });
-
-      manager.updateNote("Old Title", "Brand New Title", "Content");
-
-      expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("<div>Brand New Title</div>"),
-        NO_RETRY_OPTIONS
-      );
-    });
-
-    it("uses HTML content directly when format is html", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: true,
-        output: "",
-      });
-
-      // Use content with &amp; — if escapeForAppleScript were accidentally used,
-      // the & in &amp; would become &amp;amp;, causing this assertion to fail.
-      const htmlContent = "<h1>Title</h1><div>A &amp; B</div>";
-      const result = manager.updateNote("Old Title", undefined, htmlContent, undefined, "html");
-
-      expect(result).toBe(true);
-      // In HTML mode: content is used as-is, no <div> wrapper added
-      expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining(`to "${htmlContent}"`),
-        NO_RETRY_OPTIONS
-      );
-    });
-
-    it("does not wrap HTML content in div tags when format is html", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: true,
-        output: "",
-      });
-
-      manager.updateNote(
-        "Old Title",
-        undefined,
-        "<h1>My Title</h1><div>Content</div>",
-        undefined,
-        "html"
-      );
-
-      // Should NOT contain the <div>Old Title</div> wrapper
-      expect(mockExecuteAppleScript).not.toHaveBeenCalledWith(
-        expect.stringContaining("<div>Old Title</div>"),
-        NO_RETRY_OPTIONS
-      );
-    });
-
-    it("still wraps in div tags when format is plaintext (default)", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: true,
-        output: "",
-      });
-
-      manager.updateNote("My Title", undefined, "Plain content");
-
-      // Default behavior: should have <div> wrapper
-      expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("<div>My Title</div><div>Plain content</div>"),
-        NO_RETRY_OPTIONS
-      );
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Note Update by ID
-  // ---------------------------------------------------------------------------
-
-  describe("updateNoteById", () => {
-    it("uses HTML content directly without div wrapping in HTML mode", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: true,
-        output: "",
-      });
-
-      const htmlContent = "<h1>My Title</h1><div>A &amp; B</div>";
-      const result = manager.updateNoteById(
-        "x-coredata://ABC00000-0000-0000-0000-000000000001/ICNote/p123",
-        undefined,
-        htmlContent,
-        "html"
-      );
-
-      expect(result).toBe(true);
-      // HTML mode: content passed directly, no <div> wrapper
-      expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining(`to "${htmlContent}"`),
-        NO_RETRY_OPTIONS
-      );
-      // Should NOT contain the div-wrapped title pattern
-      expect(mockExecuteAppleScript).not.toHaveBeenCalledWith(
-        expect.stringContaining("<div>My Title</div>"),
-        NO_RETRY_OPTIONS
-      );
-    });
-
-    it("does not call getNoteById in HTML mode (skips lookup optimization)", () => {
-      mockExecuteAppleScript.mockReturnValue({
-        success: true,
-        output: "",
-      });
-
-      const htmlContent = "<h1>Title</h1><div>Body</div>";
-      manager.updateNoteById(
-        "x-coredata://ABC00000-0000-0000-0000-000000000002/ICNote/p456",
-        undefined,
-        htmlContent,
-        "html"
-      );
-
-      // In HTML mode, getNoteById should NOT be called (it would trigger
-      // an additional executeAppleScript call). Only one call should happen:
-      // the update itself.
-      expect(mockExecuteAppleScript).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -2240,80 +2139,9 @@ describe("AppleNotesManager", () => {
   // Note Moving
   // ---------------------------------------------------------------------------
 
-  describe("moveNote", () => {
-    // The note-details lookup output reused by the title-based move tests.
-    const detailsOutput = [
-      "My Note",
-      "x-coredata://ABC/ICNote/p123",
-      "Monday, January 1, 2024 at 12:00:00 PM",
-      "Monday, January 1, 2024 at 12:00:00 PM",
-      "false",
-      "false",
-    ].join(F);
-
-    it("returns true when the native move completes successfully", () => {
-      // Mock sequence: getNoteDetails (resolve id) -> default-account lookup
-      // (once per manager instance, for the reported account) -> native move.
-      mockExecuteAppleScript
-        .mockReturnValueOnce({ success: true, output: detailsOutput })
-        .mockReturnValueOnce({ success: true, output: "iCloud" })
-        .mockReturnValueOnce({ success: true, output: "" });
-
-      const result = manager.moveNote("My Note", "Archive");
-
-      expect(result).toBe(true);
-      // No copy-then-delete: the details lookup + a single native `move`.
-      expect(mockExecuteAppleScript).toHaveBeenCalledTimes(3);
-    });
-
-    it("uses the native AppleScript `move` command (preserves attachments/identity)", () => {
-      mockExecuteAppleScript
-        .mockReturnValueOnce({ success: true, output: detailsOutput })
-        .mockReturnValueOnce({ success: true, output: "iCloud" })
-        .mockReturnValueOnce({ success: true, output: "" });
-
-      manager.moveNote("My Note", "Archive");
-
-      // The last call is the move; assert it issues a native `move ... to` and
-      // does NOT rebuild the note via `make new note` (the old lossy path).
-      const moveScript = String(mockExecuteAppleScript.mock.calls.at(-1)?.[0]);
-      expect(moveScript).toContain("move noteRef to destFolder");
-      expect(moveScript).not.toContain("make new note");
-    });
-
-    it("returns false when source note cannot be found", () => {
-      mockExecuteAppleScript.mockReturnValueOnce({
-        success: false,
-        output: "",
-        error: "Note not found",
-      });
-
-      const result = manager.moveNote("Missing Note", "Archive");
-
-      expect(result).toBe(false);
-      expect(mockExecuteAppleScript).toHaveBeenCalledTimes(1); // Only tried to get details
-    });
-
-    it("returns false when the move fails (e.g. destination folder missing)", () => {
-      mockExecuteAppleScript
-        .mockReturnValueOnce({ success: true, output: detailsOutput })
-        .mockReturnValueOnce({ success: true, output: "iCloud" })
-        .mockReturnValueOnce({
-          success: false,
-          output: "",
-          error: "Folder not found",
-        });
-
-      const result = manager.moveNote("My Note", "Nonexistent Folder");
-
-      expect(result).toBe(false);
-      expect(mockExecuteAppleScript).toHaveBeenCalledTimes(3); // Details + account lookup + failed move
-    });
-  });
-
   describe("moveNoteById", () => {
     it("returns true when the native move succeeds", () => {
-      mockExecuteAppleScript.mockReturnValueOnce({ success: true, output: "" });
+      mockExecuteAppleScript.mockReturnValueOnce({ success: true, output: "SAFETY_MOVED" });
 
       const result = manager.moveNoteById("x-coredata://ABC/ICNote/p123", "Archive");
 
@@ -2322,7 +2150,21 @@ describe("AppleNotesManager", () => {
       expect(mockExecuteAppleScript).toHaveBeenCalledTimes(1);
       const moveScript = mockExecuteAppleScript.mock.calls[0][0] as string;
       expect(moveScript).toContain("move noteRef to destFolder");
+      expect(moveScript).toContain("id of actualFolder");
+      expect(moveScript).toContain('return "SAFETY_MOVED"');
       expect(moveScript).not.toContain("make new note");
+    });
+
+    it("returns false when Notes cannot verify the destination folder", () => {
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: true,
+        output: "SAFETY_WRONG_FOLDER",
+      });
+
+      const result = manager.moveNoteById("x-coredata://ABC/ICNote/p123", "Archive");
+
+      expect(result).toBe(false);
+      expect(mockExecuteAppleScript).toHaveBeenCalledTimes(1);
     });
 
     it("returns false when the move fails", () => {
@@ -3186,90 +3028,6 @@ describe("AppleNotesManager", () => {
   // Batch Operations
   // ---------------------------------------------------------------------------
 
-  describe("batchDeleteNotes", () => {
-    const ID1 = "x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1";
-    const ID2 = "x-coredata://ABC00000-0000-0000-0000-000000000012/ICNote/p2";
-
-    it("deletes the whole batch in a single osascript spawn (#26)", () => {
-      // One script handles all ids; per-id status tokens joined by RECORD_SEP.
-      mockExecuteAppleScript.mockReturnValueOnce({
-        success: true,
-        output: ["ok", "ok"].join(R) + R,
-      });
-
-      const results = manager.batchDeleteNotes([ID1, ID2]);
-
-      // Exactly one spawn for N notes, not 3N.
-      expect(mockExecuteAppleScript).toHaveBeenCalledTimes(1);
-      expect(results).toHaveLength(2);
-      expect(results[0]).toEqual({ id: ID1, success: true });
-      expect(results[1]).toEqual({ id: ID2, success: true });
-    });
-
-    it("returns error for non-existent note", () => {
-      mockExecuteAppleScript.mockReturnValueOnce({ success: true, output: "missing" + R });
-
-      const results = manager.batchDeleteNotes([
-        "x-coredata://ABC00000-0000-0000-0000-000000000099/ICNote/p404",
-      ]);
-
-      expect(results[0]).toEqual({
-        id: "x-coredata://ABC00000-0000-0000-0000-000000000099/ICNote/p404",
-        success: false,
-        error: "Note not found",
-      });
-    });
-
-    it("returns error for password-protected note", () => {
-      mockExecuteAppleScript.mockReturnValueOnce({ success: true, output: "pw" + R });
-
-      const results = manager.batchDeleteNotes([ID1]);
-
-      expect(results[0]).toEqual({ id: ID1, success: false, error: "Note is password-protected" });
-    });
-
-    it("handles mixed success and failure, preserving order", () => {
-      mockExecuteAppleScript.mockReturnValueOnce({
-        success: true,
-        output: ["ok", "missing"].join(R) + R,
-      });
-
-      const results = manager.batchDeleteNotes([ID1, ID2]);
-
-      expect(results[0]).toEqual({ id: ID1, success: true });
-      expect(results[1]).toEqual({ id: ID2, success: false, error: "Note not found" });
-    });
-
-    it("fails an invalid id without spawning, isolating it from valid ids", () => {
-      mockExecuteAppleScript.mockReturnValueOnce({ success: true, output: "ok" + R });
-
-      const results = manager.batchDeleteNotes(["not-a-valid-id", ID1]);
-
-      expect(results[0].success).toBe(false);
-      expect(results[0].error).toMatch(/Invalid note ID/);
-      expect(results[1]).toEqual({ id: ID1, success: true });
-    });
-
-    it("fails the whole batch when the single script errors", () => {
-      mockExecuteAppleScript.mockReturnValueOnce({
-        success: false,
-        output: "",
-        error: "Notes.app not responding",
-      });
-
-      const results = manager.batchDeleteNotes([ID1, ID2]);
-
-      expect(results.every((r) => r.success === false)).toBe(true);
-      expect(results[0].error).toContain("Notes.app not responding");
-    });
-
-    it("returns [] for an empty batch without spawning", () => {
-      const results = manager.batchDeleteNotes([]);
-      expect(results).toEqual([]);
-      expect(mockExecuteAppleScript).not.toHaveBeenCalled();
-    });
-  });
-
   describe("batchMoveNotes", () => {
     const ID1 = "x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1";
     const ID2 = "x-coredata://ABC00000-0000-0000-0000-000000000012/ICNote/p2";
@@ -3286,6 +3044,9 @@ describe("AppleNotesManager", () => {
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({ id: ID1, success: true });
       expect(results[1]).toEqual({ id: ID2, success: true });
+      const script = String(mockExecuteAppleScript.mock.calls[0][0]);
+      expect(script).toContain("id of actualFolder");
+      expect(script).toContain('"wrongfolder"');
     });
 
     it("returns error for non-existent note", () => {
@@ -3321,6 +3082,21 @@ describe("AppleNotesManager", () => {
 
       expect(results[0]).toEqual({ id: ID1, success: true });
       expect(results[1]).toEqual({ id: ID2, success: false, error: "Move failed" });
+    });
+
+    it("reports a move whose destination folder cannot be verified", () => {
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: true,
+        output: "wrongfolder" + R,
+      });
+
+      const results = manager.batchMoveNotes([ID1], "Archive");
+
+      expect(results[0]).toEqual({
+        id: ID1,
+        success: false,
+        error: "Destination folder verification failed",
+      });
     });
   });
 
@@ -3624,6 +3400,20 @@ describe("AppleNotesManager", () => {
     });
   });
 
+  describe("sanitizeNoteId", () => {
+    it("accepts only canonical Apple Note IDs", () => {
+      const id = "x-coredata://12345ABC-DEF0-1234-5678-9ABCDEF01234/ICNote/p100";
+      expect(sanitizeNoteId(id)).toBe(id);
+    });
+
+    it("rejects synthetic IDs and IDs for other CoreData entities", () => {
+      expect(() => sanitizeNoteId("temp-1704067200000-0")).toThrow("Invalid note ID format");
+      expect(() => sanitizeNoteId("x-coredata://ABC123/ICFolder/p50")).toThrow(
+        "Invalid note ID format"
+      );
+    });
+  });
+
   describe("escapeForAppleScript - injection prevention", () => {
     it("escapes double quotes to prevent AppleScript string breakout", () => {
       const malicious = 'Hello "World" end tell';
@@ -3688,21 +3478,36 @@ describe("AppleNotesManager", () => {
       }).toThrow("Invalid note ID format");
     });
 
-    it("deleteNoteById rejects malformed IDs", () => {
-      expect(() => {
-        manager.deleteNoteById('x-coredata://test"; delete note 1 & "');
-      }).toThrow("Invalid note ID format");
-    });
-
     it("getNoteContentById rejects malformed IDs", () => {
       expect(() => {
         manager.getNoteContentById("arbitrary string");
       }).toThrow("Invalid note ID format");
     });
 
-    it("updateNoteById rejects malformed IDs", () => {
+    it("updateNoteByIdIfUnchanged rejects malformed IDs", () => {
       expect(() => {
-        manager.updateNoteById("not-valid", undefined, "content");
+        manager.updateNoteByIdIfUnchanged(
+          "not-valid",
+          "Title",
+          "<div>Body</div>",
+          undefined,
+          "content"
+        );
+      }).toThrow("Invalid note ID format");
+    });
+
+    it("deleteNoteByIdIfUnchanged rejects malformed IDs", () => {
+      expect(() => {
+        manager.deleteNoteByIdIfUnchanged(
+          'x-coredata://test"; delete note 1 & "',
+          "<div>Body</div>"
+        );
+      }).toThrow("Invalid note ID format");
+    });
+
+    it("moveNoteById rejects malformed IDs", () => {
+      expect(() => {
+        manager.moveNoteById("not-valid", "Archive");
       }).toThrow("Invalid note ID format");
     });
   });
