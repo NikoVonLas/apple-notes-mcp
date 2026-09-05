@@ -34,6 +34,7 @@ import type {
 } from "@/types.js";
 import { BULK_LIST_MUTATION_ERROR, executeAppleScript } from "@/utils/applescript.js";
 import { getChecklistItems, type ChecklistItem } from "@/utils/checklistParser.js";
+import { enrichNoteRead, readRichNote } from "@/utils/noteRichText.js";
 import {
   assertSafeSavePath,
   readFileBase64Capped,
@@ -1356,10 +1357,16 @@ export class AppleNotesManager {
     expectedBody: string,
     newTitle: string | undefined,
     newContent: string,
-    format: "plaintext" | "html" = "plaintext"
+    format: "plaintext" | "html" = "plaintext",
+    expectedRichRevision?: string
   ):
     { status: "updated"; writtenBody: string } | { status: "conflict" | "attachments" | "failed" } {
     const safeId = sanitizeNoteId(id);
+    if (expectedRichRevision) {
+      const rich = readRichNote(id);
+      if (rich.revision !== expectedRichRevision) return { status: "conflict" };
+      if (rich.hasNativeObjects || rich.hasChecklist) return { status: "attachments" };
+    }
     if (newTitle) validateLength(newTitle, MAX_TITLE_LENGTH, "Note title");
     validateLength(newContent, MAX_CONTENT_LENGTH, "Note content");
     validateLength(expectedBody, MAX_CONTENT_LENGTH, "Expected note content");
@@ -1729,6 +1736,95 @@ export class AppleNotesManager {
   // ===========================================================================
   // Folder Operations
   // ===========================================================================
+
+  /** Rename in place. Never implement rename as copy/move/delete. */
+  renameFolderById(id: string, expectedName: string, expectedParentId: string, newName: string) {
+    if (!/^x-coredata:\/\/[0-9a-f-]+\/ICFolder\/p\d+$/i.test(id))
+      throw new Error("An exact folder ID is required");
+    if (
+      !newName.trim() ||
+      newName.length > 1000 ||
+      Array.from(newName).some((c) => c.charCodeAt(0) < 32)
+    )
+      throw new Error("Invalid folder name");
+    const literal = (s: string) => `"${escapePlainStringForAppleScript(s)}"`;
+    const script = `tell application "Notes"
+      set targetFolder to folder id ${literal(id)}
+      set parentRef to container of targetFolder
+      set parentId to id of parentRef
+      considering case
+        if name of targetFolder is not ${literal(expectedName)} or parentId is not ${literal(expectedParentId)} then error "Folder changed; read it again"
+      end considering
+      repeat with sibling in folders of parentRef
+        if name of sibling is ${literal(newName)} and id of sibling is not ${literal(id)} then error "A sibling folder already has this name"
+      end repeat
+      set name of targetFolder to ${literal(newName)}
+      considering case
+        if id of targetFolder is not ${literal(id)} or name of targetFolder is not ${literal(newName)} or id of container of targetFolder is not parentId then error "Rename readback failed"
+      end considering
+      return id of targetFolder
+    end tell`;
+    const result = executeMutationAppleScript(script);
+    if (!result.success)
+      throw new Error(
+        result.error || "Rename outcome uncertain; read folder by ID before retrying"
+      );
+    return { id, name: newName, parentId: expectedParentId };
+  }
+
+  getFolderById(id: string) {
+    if (!/^x-coredata:\/\/[0-9a-f-]+\/ICFolder\/p\d+$/i.test(id))
+      throw new Error("An exact folder ID is required");
+    const result = executeAppleScript(`tell application "Notes"
+      set f to folder id "${id}"
+      return (name of f) & ${AS_FIELD_SEP} & (id of container of f)
+    end tell`);
+    if (!result.success) throw new Error(result.error || "Folder not found");
+    const [name, parentId] = result.output.replace(/\n$/, "").split(FIELD_SEP);
+    if (!name || !parentId) throw new Error("Incomplete folder metadata");
+    return { id, name, parentId };
+  }
+
+  addAttachmentById(id: string, expectedBody: string, filePath: string) {
+    if (!/^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i.test(id))
+      throw new Error("Exact note ID required");
+    const q = (s: string) => `"${escapePlainStringForAppleScript(s)}"`;
+    const result = executeMutationAppleScript(`tell application "Notes"
+      set n to note id ${q(id)}
+      if password protected of n then error "Locked note"
+      considering case
+        if body of n is not ${q(expectedBody)} and body of n is not (${q(expectedBody)} & linefeed) then error "Note changed before attachment insertion"
+      end considering
+      set a to make new attachment at n with data (POSIX file ${q(filePath)})
+      return id of a
+    end tell`);
+    if (!result.success)
+      throw new Error(
+        result.error || "Attachment insertion outcome uncertain; read note before retrying"
+      );
+    return result.output.trim();
+  }
+
+  deleteAttachmentById(id: string, expectedBody: string, attachmentId: string) {
+    if (!/^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i.test(id))
+      throw new Error("Exact note ID required");
+    const q = (s: string) => `"${escapePlainStringForAppleScript(s)}"`;
+    const result = executeMutationAppleScript(`tell application "Notes"
+      set n to note id ${q(id)}
+      considering case
+        if body of n is not ${q(expectedBody)} and body of n is not (${q(expectedBody)} & linefeed) then error "Note changed before attachment deletion"
+      end considering
+      set targetAttachment to attachment id ${q(attachmentId)} of n
+      set attachmentIds to id of every attachment of n
+      if attachmentIds does not contain ${q(attachmentId)} then error "Attachment does not belong to this note"
+      delete targetAttachment
+      return "deleted"
+    end tell`);
+    if (!result.success || result.output.trim() !== "deleted")
+      throw new Error(
+        result.error || "Attachment deletion outcome uncertain; read note before retrying"
+      );
+  }
 
   /**
    * Lists all folders in an account with full hierarchical paths.
@@ -3291,10 +3387,11 @@ export class AppleNotesManager {
   getNoteMarkdown(title: string, account?: string): string {
     const html = this.getNoteContent(title, account);
     if (!html) return "";
-    let markdown = this.htmlToMarkdown(html);
+    const note = this.getNoteDetails(title, account);
+    const rich = note?.id ? enrichNoteRead(note.id, html) : undefined;
+    let markdown = this.htmlToMarkdown(rich?.content || html);
 
     // Try to enrich with checklist state (requires note ID)
-    const note = this.getNoteDetails(title, account);
     if (note?.id) {
       const result = getChecklistItems(note.id);
       if (result.items) {
@@ -3321,7 +3418,8 @@ export class AppleNotesManager {
   getNoteMarkdownById(id: string): string {
     const html = this.getNoteContentById(id);
     if (!html) return "";
-    let markdown = this.htmlToMarkdown(html);
+    const rich = enrichNoteRead(id, html);
+    let markdown = this.htmlToMarkdown(rich.content);
 
     // Try to enrich with checklist state
     const result = getChecklistItems(id);

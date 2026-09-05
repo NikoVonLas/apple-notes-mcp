@@ -44,7 +44,19 @@ import { FULL_DISK_ACCESS_GUIDE_URL } from "@/utils/docsUrls.js";
 import { loadFileConfig } from "@/services/fileConfig.js";
 import { registerResourcesAndPrompts } from "@/tools/resourcesAndPrompts.js";
 import { withJsonSchema2020_12 } from "@/utils/jsonSchemaDialect.js";
-import { comparableVisibleText, hashNoteContent } from "@/utils/noteRevision.js";
+import { comparableVisibleText } from "@/utils/noteRevision.js";
+import { addNativeTags, nativeTagsStatus, runNativeTagsShortcut } from "@/services/nativeTags.js";
+import { registerBackgroundOperations, VERIFIED_BACKGROUND } from "@/tools/backgroundOperations.js";
+import { appendNative } from "@/services/backgroundNotes.js";
+import {
+  enrichNoteRead,
+  richContentHash,
+  assertLinkedWrite,
+  htmlLinks,
+  linkSignature,
+  type RichRead,
+  readRichNote,
+} from "@/utils/noteRichText.js";
 
 // Load file-based config FIRST (#24) — before anything reads APPLE_NOTES_MCP_*.
 // Lets users configure the server when the host app strips the MCP env block.
@@ -72,6 +84,7 @@ const server = new McpServer({
  * Handles all AppleScript execution and note operations.
  */
 const notesManager = new AppleNotesManager();
+registerBackgroundOperations(server, notesManager);
 
 // =============================================================================
 // Response Helpers
@@ -187,6 +200,7 @@ type ExactNoteSnapshot = {
   note: NonNullable<ReturnType<AppleNotesManager["getNoteById"]>>;
   body: string;
   contentHash: string;
+  rich: RichRead;
 };
 
 /**
@@ -204,7 +218,8 @@ function readExactNoteSnapshot(id: string): ExactNoteSnapshot | { error: string 
   }
   const body = notesManager.getNoteContentById(id);
   if (!body) return { error: `Failed to read content of note "${note.title}"` };
-  return { note, body, contentHash: hashNoteContent(body) };
+  const rich = enrichNoteRead(id, body);
+  return { note, body, rich, contentHash: richContentHash(body, rich) };
 }
 
 function revisionConflictMessage(title: string): string {
@@ -300,7 +315,7 @@ registerTool(
         .max(MAX.TAGS)
         .optional()
         .describe(
-          "Returned-only metadata — NOT written to Notes.app. Apple Notes tags can't be set via AppleScript, so any values passed here are echoed back in the response but do not appear on the created note. Use #hashtags inside the content body instead (Notes.app turns those into real tags)."
+          "Returned-only metadata — NOT written to Notes.app. Apple Notes tags can't be set via AppleScript, so any values passed here are echoed back in the response but do not appear on the created note. Use #hashtags in the body for searchable text; this does not create native tag objects. Native tags need the Notes Shortcuts action."
         ),
       folder: z
         .string()
@@ -353,7 +368,7 @@ registerTool(
         `A note may have been created, but its exact ID could not be verified. Do not retry automatically. Returned ID: ${note.id}`
       );
     }
-    const contentHash = hashNoteContent(createdBody);
+    const contentHash = richContentHash(createdBody, enrichNoteRead(note.id, createdBody));
 
     const checklistWarning = detectChecklistAttempt(content) ?? "";
     return successResponse(`Note created: "${note.title}" [id: ${note.id}]${checklistWarning}`, {
@@ -474,7 +489,7 @@ registerTool(
   "get-note-content",
   {
     description:
-      "Use when: reading the full body text of one known note, by id (preferred) or title.\nReturns: the exact note id, content, contentHash revision token, parsed hashtags, and strippedImages/truncated when the body was capped.\nDo not use when: you only need metadata (get-note-details) or Markdown with checklist state (get-note-markdown).\nNote: password-protected notes must be unlocked in Notes.app first.\nSafety: inline images larger than APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES (default 256 KB) are replaced with '[inline image omitted: ...]' text placeholders, so the returned body is lossy whenever truncated is true. Mutations refuse attachment-bearing notes; edit those in Notes.app.",
+      "Use when: reading the full body text of one known note, by id (preferred) or title.\nReturns: the exact note id, content, contentHash revision token, parsed hashtags, nativeTags, restored links, richContentComplete/writable, and strippedImages/truncated when the body was capped. Read the warning when writable is false.\nDo not use when: you only need metadata (get-note-details) or Markdown with checklist state (get-note-markdown).\nNote: password-protected notes must be unlocked in Notes.app first.\nSafety: inline images larger than APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES (default 256 KB) are replaced with '[inline image omitted: ...]' text placeholders, so the returned body is lossy whenever truncated is true. Mutations refuse attachment-bearing notes; edit those in Notes.app.",
     inputSchema: {
       id: z
         .string()
@@ -500,6 +515,15 @@ registerTool(
       content: z.string().optional(),
       contentHash: z.string().optional(),
       hashtags: z.array(z.string()).optional(),
+      nativeTags: z.array(z.string()).optional(),
+      links: z
+        .array(
+          z.object({ start: z.number(), length: z.number(), text: z.string(), url: z.string() })
+        )
+        .optional(),
+      richContentComplete: z.boolean().optional(),
+      writable: z.boolean().optional(),
+      warning: z.string().optional(),
       /** Number of oversized inline images replaced with text placeholders. */
       strippedImages: z.number().optional(),
       /** True when content is lossy — see strippedImages. Never write a truncated body back. */
@@ -525,15 +549,26 @@ registerTool(
       }
       // Cap inline base64 images so an image-heavy note cannot produce a
       // response large enough to blow the client's MCP message limit.
-      const stripped = stripLargeInlineImages(rawContent);
+      const rich = enrichNoteRead(id, rawContent);
+      const stripped = stripLargeInlineImages(rich.content);
       const content = stripped.html;
       const hashtags = parseHashtags(content);
-      const warning = strippedImagesWarning(stripped);
+      const warning = [strippedImagesWarning(stripped), rich.warning].filter(Boolean).join("\n\n");
       return successResponse(warning ? content + warning : content, {
         id,
         title: note.title,
         content,
-        contentHash: hashNoteContent(rawContent),
+        contentHash: richContentHash(rawContent, rich),
+        links: rich.links,
+        nativeTags: rich.nativeTags,
+        richContentComplete: rich.complete,
+        writable: rich.writable && stripped.strippedCount === 0,
+        supportedOperations: {
+          fullBodyReplace: rich.writable && stripped.strippedCount === 0,
+          nativeAppendImplemented: VERIFIED_BACKGROUND.has("append-native"),
+          requiresShortcut: true,
+        },
+        warning: rich.warning,
         hashtags,
         strippedImages: stripped.strippedCount,
         truncated: stripped.strippedCount > 0,
@@ -561,15 +596,21 @@ registerTool(
       return errorResponse(`Failed to read content of note "${title}"`);
     }
 
-    const stripped = stripLargeInlineImages(rawContent);
+    const rich = enrichNoteRead(note.id, rawContent);
+    const stripped = stripLargeInlineImages(rich.content);
     const content = stripped.html;
     const hashtags = parseHashtags(content);
-    const warning = strippedImagesWarning(stripped);
+    const warning = [strippedImagesWarning(stripped), rich.warning].filter(Boolean).join("\n\n");
     return successResponse(warning ? content + warning : content, {
       id: note.id,
       title,
       content,
-      contentHash: hashNoteContent(rawContent),
+      contentHash: richContentHash(rawContent, rich),
+      links: rich.links,
+      nativeTags: rich.nativeTags,
+      richContentComplete: rich.complete,
+      writable: rich.writable && stripped.strippedCount === 0,
+      warning: rich.warning,
       hashtags,
       strippedImages: stripped.strippedCount,
       truncated: stripped.strippedCount > 0,
@@ -891,13 +932,101 @@ registerTool(
 // --- update-note ---
 
 registerTool(
-  "update-note",
+  "native-tags-status",
   {
     description:
-      "Use when: replacing the body of one exact Apple Note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or the note has attachments.\nSafety: requires the exact note id and expectedContentHash from get-note-content. The server atomically rejects stale content and attachment-bearing notes, then reads the same id back after saving. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
+      "Check whether the native Notes tagging Shortcut is installed. Installation alone does not prove a successful live tagging test.",
+    inputSchema: {},
+    outputSchema: { shortcut: z.string().optional(), installed: z.boolean().optional() },
+  },
+  withErrorHandling(() => {
+    const status = nativeTagsStatus();
+    return successResponse(
+      status.installed
+        ? "Native tagging Shortcut is installed"
+        : "Import the supplied Native Tags shortcut first",
+      status
+    );
+  }, "Error checking native tags")
+);
+
+registerTool(
+  "add-native-tags",
+  {
+    description:
+      "Add real, clickable Apple Notes tags through the installed Shortcuts bridge. Requires an exact note ID and current revision. scopeText must be a distinctive existing phrase in the project note, not a hashtag. Prefer plain words: native Notes search may not resolve repository paths literally. Both the server and Shortcut refuse ambiguous title+scope matches. Verifies tags, original text, links and existing objects by exact ID after writing. This is additive and does not replace the body. Full-body editing of tagged notes remains protected; no UI automation or database writes are used. Cross-process preflight and mutation are not atomic; avoid concurrent edits during tagging. If completion is uncertain, read the exact note before retrying.",
     inputSchema: {
       id: noteIdInput,
       expectedContentHash: expectedContentHashInput,
+      scopeText: z
+        .string()
+        .min(12)
+        .max(500)
+        .describe(
+          "Distinctive existing single-line phrase, e.g. Черновик механики для идеи. Avoid paths and hashtags."
+        ),
+      tags: z.array(z.string().min(1).max(101)).min(1).max(100),
+    },
+    outputSchema: {
+      ok: z.boolean().optional(),
+      id: z.string().optional(),
+      nativeTags: z.array(z.string()).optional(),
+      added: z.array(z.string()).optional(),
+      contentHash: z.string().optional(),
+    },
+  },
+  withErrorHandling(({ id, expectedContentHash, scopeText, tags }) => {
+    const initial = readExactNoteSnapshot(id);
+    if ("error" in initial) return errorResponse(initial.error);
+    const result = addNativeTags(
+      { id, expectedContentHash, scopeText, tags, title: initial.note.title },
+      {
+        read: (exactId) => {
+          const snapshot = readExactNoteSnapshot(exactId);
+          if ("error" in snapshot) throw new Error(snapshot.error);
+          return {
+            contentHash: snapshot.contentHash,
+            title: snapshot.note.title,
+            plaintext: notesManager.getNotePlaintextById(exactId),
+            rich: readRichNote(exactId),
+          };
+        },
+        candidates: (title, scope) =>
+          notesManager.listAccounts().flatMap((account) =>
+            notesManager
+              .searchNotes(title, false, account.name)
+              .filter(
+                (note) =>
+                  !note.passwordProtected &&
+                  notesManager
+                    .getNotePlaintextById(note.id)
+                    .toLocaleLowerCase()
+                    .includes(scope.toLocaleLowerCase())
+              )
+              .map((note) => note.id)
+          ),
+        run: runNativeTagsShortcut,
+      }
+    );
+    return successResponse("Native tags verified on the exact note", { ok: true, id, ...result });
+  }, "Error adding native tags")
+);
+
+registerTool(
+  "update-note",
+  {
+    description:
+      "Use when: replacing the body of one exact Apple Note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or the note has attachments.\nSafety: requires the exact note id and expectedContentHash from get-note-content. The server checks rich metadata revision, atomically checks the AppleScript body, blocks native objects/checklists, and verifies actual link destinations after saving. Preserve returned HTML links unless allowLinkChanges is explicitly requested. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
+    inputSchema: {
+      id: noteIdInput,
+      expectedContentHash: expectedContentHashInput,
+      allowLinkChanges: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Set true only when the user explicitly intends to remove, relabel or change existing links. Defaults to preserving all links."
+        ),
       newTitle: z
         .string()
         .max(MAX.TITLE)
@@ -928,78 +1057,100 @@ registerTool(
       verifiedVisibleText: z.boolean().optional(),
     },
   },
-  withErrorHandling(({ id, expectedContentHash, newTitle, newContent, format = "plaintext" }) => {
-    const snapshot = readExactNoteSnapshot(id);
-    if ("error" in snapshot) return errorResponse(snapshot.error);
-    if (snapshot.contentHash !== expectedContentHash) {
-      return errorResponse(revisionConflictMessage(snapshot.note.title));
-    }
-
-    // This preflight gives a clear count. The manager repeats the attachment
-    // check inside the same AppleScript as the write to close the race window.
-    const attachments = notesManager.listAttachmentsById(id);
-    if (attachments.length > 0) {
-      return errorResponse(
-        `Note "${snapshot.note.title}" has ${attachments.length} attachment(s). Full-body replacement is blocked; edit it in Notes.app.`
-      );
-    }
-
-    const result = notesManager.updateNoteByIdIfUnchanged(
+  withErrorHandling(
+    ({
       id,
-      snapshot.note.title,
-      snapshot.body,
+      expectedContentHash,
       newTitle,
       newContent,
-      format
-    );
-    if (result.status === "conflict") {
-      return errorResponse(revisionConflictMessage(snapshot.note.title));
-    }
-    if (result.status === "attachments") {
-      return errorResponse(
-        `Note "${snapshot.note.title}" gained an attachment before saving. No content was replaced.`
-      );
-    }
-    if (result.status !== "updated") {
-      return errorResponse(
-        `The update result for note "${snapshot.note.title}" is uncertain. Read the exact ID before retrying.`
-      );
-    }
-
-    const readback = notesManager.getNoteContentById(id);
-    const contentHash = readback ? hashNoteContent(readback) : "";
-    if (
-      !readback ||
-      comparableVisibleText(readback) !== comparableVisibleText(result.writtenBody)
-    ) {
-      return errorResponse(
-        `The note accepted an update, but exact-ID readback visible text did not match. Do not retry automatically; inspect note ID ${id} in Notes.app.`
-      );
-    }
-
-    const displayTitle = resolveUpdateResponseTitle(
-      snapshot.note.title,
-      newTitle,
-      format,
-      newContent
-    );
-    const sharedWarning = snapshot.note.shared
-      ? "\n\n⚠️ This note is shared with collaborators. Your changes are visible to them."
-      : "";
-    const checklistWarning = detectChecklistAttempt(newContent) ?? "";
-    return successResponse(
-      `Note updated; visible text verified: "${displayTitle}" [id: ${id}]${sharedWarning}${checklistWarning}`,
-      {
-        ok: true,
-        id,
-        title: displayTitle,
-        shared: snapshot.note.shared ?? false,
-        previousContentHash: expectedContentHash,
-        contentHash,
-        verifiedVisibleText: true,
+      format = "plaintext",
+      allowLinkChanges = false,
+    }) => {
+      const snapshot = readExactNoteSnapshot(id);
+      if ("error" in snapshot) return errorResponse(snapshot.error);
+      if (snapshot.contentHash !== expectedContentHash) {
+        return errorResponse(revisionConflictMessage(snapshot.note.title));
       }
-    );
-  }, "Error updating note")
+
+      assertLinkedWrite(snapshot.rich, newContent, format, allowLinkChanges);
+
+      // This preflight gives a clear count. The manager repeats the attachment
+      // check inside the same AppleScript as the write to close the race window.
+      const attachments = notesManager.listAttachmentsById(id);
+      if (attachments.length > 0) {
+        return errorResponse(
+          `Note "${snapshot.note.title}" has ${attachments.length} attachment(s). Full-body replacement is blocked; edit it in Notes.app.`
+        );
+      }
+
+      const result = notesManager.updateNoteByIdIfUnchanged(
+        id,
+        snapshot.note.title,
+        snapshot.body,
+        newTitle,
+        newContent,
+        format,
+        snapshot.rich.revision
+      );
+      if (result.status === "conflict") {
+        return errorResponse(revisionConflictMessage(snapshot.note.title));
+      }
+      if (result.status === "attachments") {
+        return errorResponse(
+          `Note "${snapshot.note.title}" gained an attachment before saving. No content was replaced.`
+        );
+      }
+      if (result.status !== "updated") {
+        return errorResponse(
+          `The update result for note "${snapshot.note.title}" is uncertain. Read the exact ID before retrying.`
+        );
+      }
+
+      const readback = notesManager.getNoteContentById(id);
+      const richReadback = enrichNoteRead(id, readback || "");
+      const contentHash = readback ? richContentHash(readback, richReadback) : "";
+      if (
+        !richReadback.complete ||
+        linkSignature(richReadback.links) !== linkSignature(htmlLinks(result.writtenBody))
+      ) {
+        return errorResponse(
+          "The note accepted the write, but rich-link readback is not verified. Read the exact ID before retrying; do not repeat the write automatically."
+        );
+      }
+      if (
+        !readback ||
+        comparableVisibleText(readback) !== comparableVisibleText(result.writtenBody)
+      ) {
+        return errorResponse(
+          `The note accepted an update, but exact-ID readback visible text did not match. Do not retry automatically; inspect note ID ${id} in Notes.app.`
+        );
+      }
+
+      const displayTitle = resolveUpdateResponseTitle(
+        snapshot.note.title,
+        newTitle,
+        format,
+        newContent
+      );
+      const sharedWarning = snapshot.note.shared
+        ? "\n\n⚠️ This note is shared with collaborators. Your changes are visible to them."
+        : "";
+      const checklistWarning = detectChecklistAttempt(newContent) ?? "";
+      return successResponse(
+        `Note updated; visible text verified: "${displayTitle}" [id: ${id}]${sharedWarning}${checklistWarning}`,
+        {
+          ok: true,
+          id,
+          title: displayTitle,
+          shared: snapshot.note.shared ?? false,
+          previousContentHash: expectedContentHash,
+          contentHash,
+          verifiedVisibleText: true,
+        }
+      );
+    },
+    "Error updating note"
+  )
 );
 
 // --- append-to-note ---
@@ -1008,7 +1159,7 @@ registerTool(
   "append-to-note",
   {
     description:
-      "Use when: adding content to one exact note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or it has attachments.\nSafety: append still rewrites the full HTML body, so it uses the same exact-ID, revision, attachment, and readback guards as update-note. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
+      "Use when: adding content to one exact note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or it has attachments.\nSafety: protected native-object notes use native end-append with scopeText; ordinary notes retain guarded HTML editing. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
     inputSchema: {
       id: noteIdInput,
       expectedContentHash: expectedContentHashInput,
@@ -1017,6 +1168,12 @@ registerTool(
         .min(1, "Content to append is required")
         .max(MAX.CONTENT)
         .describe("Text to append to the note body"),
+      scopeText: z
+        .string()
+        .min(12)
+        .max(500)
+        .optional()
+        .describe("Existing unique phrase required for native append to protected notes"),
       position: z
         .enum(["after", "before"])
         .optional()
@@ -1054,6 +1211,7 @@ registerTool(
       position = "after",
       separator = "\n\n",
       format = "plaintext",
+      scopeText,
     }) => {
       // Helper: convert new content to HTML block(s) and separator to HTML.
       // Notes stores its body as HTML; reading plaintext and writing back as
@@ -1086,6 +1244,26 @@ registerTool(
       if (snapshot.contentHash !== expectedContentHash) {
         return errorResponse(revisionConflictMessage(snapshot.note.title));
       }
+      if (!snapshot.rich.writable) {
+        if (separator !== "\n\n")
+          return errorResponse("Native append supports the default blank-line separator only");
+        if (position !== "after")
+          return errorResponse("Native append supports the end of a note only");
+        if (!scopeText)
+          return errorResponse("Provide scopeText: a unique existing phrase for native append");
+        if (!VERIFIED_BACKGROUND.has("append-native"))
+          return errorResponse(
+            "Native append has not passed live validation; see get-capabilities"
+          );
+        const result = appendNative(notesManager, {
+          id,
+          expectedContentHash,
+          scopeText,
+          content,
+          format,
+        });
+        return successResponse("Native append verified without replacing existing objects", result);
+      }
       const attachments = notesManager.listAttachmentsById(id);
       if (attachments.length > 0) {
         return errorResponse(
@@ -1093,10 +1271,13 @@ registerTool(
         );
       }
 
+      assertLinkedWrite(snapshot.rich, snapshot.rich.content, "html");
+
       // Separate the title <div> from the body
-      const firstDivEnd = snapshot.body.indexOf("</div>");
-      const titleDiv = firstDivEnd !== -1 ? snapshot.body.slice(0, firstDivEnd + 6) : "";
-      const bodyHtml = firstDivEnd !== -1 ? snapshot.body.slice(firstDivEnd + 6) : snapshot.body;
+      const firstDivEnd = snapshot.rich.content.indexOf("</div>");
+      const titleDiv = firstDivEnd !== -1 ? snapshot.rich.content.slice(0, firstDivEnd + 6) : "";
+      const bodyHtml =
+        firstDivEnd !== -1 ? snapshot.rich.content.slice(firstDivEnd + 6) : snapshot.rich.content;
       const newBlock = contentToHtml(content);
       const sepHtml = separatorToHtml(separator);
       const combinedBody =
@@ -1110,7 +1291,8 @@ registerTool(
         snapshot.body,
         undefined,
         combinedBody,
-        "html"
+        "html",
+        snapshot.rich.revision
       );
       if (result.status === "conflict") {
         return errorResponse(revisionConflictMessage(snapshot.note.title));
@@ -1127,7 +1309,16 @@ registerTool(
       }
 
       const readback = notesManager.getNoteContentById(id);
-      const contentHash = readback ? hashNoteContent(readback) : "";
+      const richReadback = enrichNoteRead(id, readback || "");
+      const contentHash = readback ? richContentHash(readback, richReadback) : "";
+      if (
+        !richReadback.complete ||
+        linkSignature(richReadback.links) !== linkSignature(htmlLinks(result.writtenBody))
+      ) {
+        return errorResponse(
+          "The note accepted the write, but rich-link readback is not verified. Read the exact ID before retrying; do not repeat the write automatically."
+        );
+      }
       if (
         !readback ||
         comparableVisibleText(readback) !== comparableVisibleText(result.writtenBody)

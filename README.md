@@ -921,6 +921,111 @@ Lists all notes shared with collaborators.
 
 ---
 
+### Local background operations (2.8.2-local.4)
+
+Use `get-capabilities` before native writes. Registered tools may be disabled:
+installation and successful live validation are separate requirements. These
+operations never use UI automation or write directly to the Notes database.
+See [bridge setup and validation](shortcuts/README.md).
+
+#### `get-capabilities`
+
+Reports installed bridge, implemented operations, live verification, availability,
+and precise reasons for unavailable functions. Takes no parameters.
+
+#### `native-tags-status`
+
+Checks installation of the separate native-tag bridge. Takes no parameters.
+
+#### `add-native-tags`
+
+Adds actual native tags using the existing verified bridge. Requires `id`,
+`expectedContentHash`, a unique existing `scopeText`, and `tags`. Plain hashtags
+alone do not prove native tag registration.
+
+#### `get-folder-by-id`
+
+Requires a folder `id`; returns its current name and parent ID for guarded rename.
+
+#### `rename-folder`
+
+Renames in place using `id`, `expectedName`, `expectedParentId`, and `newName`.
+Preserves folder identity and contents; refuses stale metadata and sibling conflicts.
+
+#### `append-native`
+
+Requires note `id`, fresh `expectedContentHash`, unique existing `scopeText`,
+`content`, and optional `format` (`plaintext`, semantic `html`, or bounded
+`markdown`). Appends with a visible blank line, preserving existing rich objects.
+Markdown supports headings, flat lists, emphasis and links; unsupported syntax is
+rejected. Tables use `create-table`. Disabled pending live bridge validation.
+
+#### `get-native-objects`
+
+Reads a note by `id`. Returns native object IDs and ranges, checklist item IDs and
+states, and decoded native tables with row/column IDs. Incomplete metadata is
+reported explicitly. Does not infer identities from labels.
+
+#### `create-checklist-item`
+
+Adds one unchecked native checklist item using `id`, `expectedContentHash`,
+`scopeText`, and single-line `text`. Disabled pending live bridge validation.
+
+#### `create-table`
+
+Appends a native table using `id`, `expectedContentHash`, `scopeText`, and
+rectangular `rows` (arrays of strings). Verifies native identity and all cells;
+does not substitute a text table. Disabled pending live bridge validation.
+
+#### `set-note-pinned`
+
+Requires `id`, `expectedContentHash`, `scopeText`, `expectedPinned`, and desired
+boolean `pinned`. Sets an explicit state and verifies metadata without rewriting
+the note. Disabled pending live bridge validation.
+
+#### `remove-native-tags`
+
+Removes `tags` from one note using `id`, `expectedContentHash`, and `scopeText`.
+Does not delete global tag definitions. Live-verified with Background Operations v4.
+
+#### `replace-native-tag`
+
+Requires `oldTag`, `newTag`, and explicit `notes`, each with `id`,
+`expectedContentHash`, and `scopeText`. Adds and verifies the new tag before
+removing the old; reports partial progress. Smart Folder rules are not renamed.
+Live-verified using Native Tags for addition and Background Operations v4 for
+removal. Both bridges must be installed. Creation through the generic background
+bridge did not pass live validation, so it is not used for additions.
+
+#### `list-native-tags`
+
+Requires exact `account` and `folder`; returns actual native tags and matching
+note IDs within that folder. Reports partial reads.
+
+#### `insert-note-link`
+
+Requires `id`, `expectedContentHash`, `scopeText`, `linkedNoteId`, and optional
+`label`. Retrieves and appends the real Notes link; its label is static, not a
+dynamic-title object. Disabled pending live bridge validation.
+
+#### `add-attachment`
+
+Requires `id`, `expectedContentHash`, and absolute local `path`. Adds one
+nonempty regular file (maximum 64 MiB) through AppleScript, preserves the original
+note, and verifies fetched bytes against the source SHA-256.
+
+#### `delete-attachment`
+
+Registered but disabled: this macOS rejects both available background routes.
+Requires `id`, `expectedContentHash`, and exact `attachmentId` if subsequently
+enabled after validation. Never substitutes a full-body rewrite.
+
+#### `delete-table`
+
+Registered but disabled for the same platform limitation as attachment deletion.
+Requires `id`, `expectedContentHash`, and exact `attachmentId` from
+`get-native-objects` if subsequently enabled.
+
 ## Usage Patterns
 
 ### Basic Workflow
