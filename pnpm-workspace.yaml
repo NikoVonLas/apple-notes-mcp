@@ -7,6 +7,11 @@
 allowBuilds:
   esbuild: true
 
+# Keep dependency layout identical in interactive shells, Git hooks, and CI.
+# pnpm otherwise changes this default in CI and treats node_modules as stale
+# when the next local hook runs.
+enableGlobalVirtualStore: false
+
 # Supply-chain soak: refuse any package version younger than 7 days (10080 min).
 # Deliberately stricter than pnpm 11's 1440-minute default, and deliberately NOT
 # redundant with dependabot.yml's 7-day cooldown: the cooldown governs only what

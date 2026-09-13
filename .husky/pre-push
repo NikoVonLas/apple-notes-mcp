@@ -1,1 +1,1 @@
-pnpm run typecheck && pnpm test
+corepack pnpm run typecheck && corepack pnpm test
