@@ -117,7 +117,7 @@ Apple Notes stores checklists as a paragraph style inside a gzipped protobuf blo
 
 **For a new checklist note:**
 
-1. Create the note with `<ul><li>…</li></ul>` items (HTML) or `- ` bullet lines (plaintext) — the list structure is preserved.
+1. Create the note with a distinctive plain-text scope phrase.
 2. Read the new note to obtain its fresh content hash, then call
    `create-checklist-item` once per item, refreshing the hash after each write.
 3. `get-checklist-state`, `get-native-objects`, and `get-note-markdown` can read

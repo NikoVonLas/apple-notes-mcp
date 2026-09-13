@@ -173,8 +173,13 @@ reading Notes' own database instead; the rest genuinely cannot be supported. See
 **[docs/APPLESCRIPT-LIMITATIONS.md](https://github.com/sweetrb/apple-notes-mcp/blob/main/docs/APPLESCRIPT-LIMITATIONS.md)**
 for the investigation and verification behind each:
 
-- **Pinned notes** — Notes has no scriptable `pinned` property via AppleScript. Pin state can now be **read** with the BETA `get-note-metadata` tool (from the NoteStore database), but it still cannot be **set** programmatically.
-- **Note-to-note links** — AppleScript exposes no link property or link element, so link *relationships* between notes cannot be read, and a link cannot be inserted into a note body. A shareable `notes://showNote?identifier=<uuid>` deep link **is** available via [`get-note-link`](#get-note-link).
+- **Pinned notes** — AppleScript has no scriptable `pinned` property. Pin state is
+  read with `get-note-metadata`; `set-note-pinned` uses the separately installed
+  Background Operations Shortcut and verifies the result.
+- **Note-to-note links** — AppleScript exposes no link element. The server restores
+  link relationships from Notes rich data, `get-note-link` retrieves a shareable
+  deep link, and `insert-note-link` inserts one through the Background Operations
+  Shortcut.
 
 ---
 
@@ -999,16 +1004,15 @@ the note. Live-verified for pin and unpin with Background Operations v5.
 #### `remove-native-tags`
 
 Removes `tags` from one note using `id`, `expectedContentHash`, and `scopeText`.
-Does not delete global tag definitions. Live-verified with Background Operations v4;
-v5 retains the same removal branch.
+Does not delete global tag definitions. Live-verified with Background Operations v5.
 
 #### `replace-native-tag`
 
 Requires `oldTag`, `newTag`, and explicit `notes`, each with `id`,
 `expectedContentHash`, and `scopeText`. Adds and verifies the new tag before
 removing the old; reports partial progress. Smart Folder rules are not renamed.
-Live-verified using Native Tags for addition and Background Operations v4 for
-removal; v5 retains the same removal branch. Both bridges must be installed. Creation through the generic background
+Live-verified using Native Tags for addition and Background Operations v5 for
+removal. Both bridges must be installed. Creation through the generic background
 bridge did not pass live validation, so it is not used for additions.
 
 #### `list-native-tags`
@@ -1031,7 +1035,8 @@ note, and verifies fetched bytes against the source SHA-256.
 
 #### `delete-attachment`
 
-Registered but disabled: this macOS rejects both available background routes.
+Registered but disabled because the available background routes have not passed
+the required preservation checks.
 Requires `id`, `expectedContentHash`, and exact `attachmentId` if subsequently
 enabled after validation. Never substitutes a full-body rewrite.
 
@@ -1247,15 +1252,16 @@ Every tool that does not read the Notes database works normally without Full Dis
 |------------|--------|
 | macOS only | Apple Notes and AppleScript are macOS-specific |
 | Batch ops run per-note | `batch-delete-notes` / `batch-move-notes` apply each note individually rather than as one bulk operation — AppleScript has no bulk equivalent to IMAP's `UID STORE`/`MOVE`. This is deliberate: it preserves per-note success/failure reporting. ([#26](https://github.com/sweetrb/apple-notes-mcp/issues/26)) |
-| Pinned notes are read-only | AppleScript exposes no `pinned` property. Pin state is readable via the BETA `get-note-metadata` tool (NoteStore database, needs Full Disk Access) but cannot be set ([#28](https://github.com/sweetrb/apple-notes-mcp/issues/28)) |
+| Pinned notes need the bridge for writes | AppleScript exposes no `pinned` property. `get-note-metadata` reads pin state; `set-note-pinned` requires the Background Operations Shortcut. ([#28](https://github.com/sweetrb/apple-notes-mcp/issues/28)) |
 | Limited rich formatting | Use `format: "html"` on create/update for headings, lists, bold, code blocks; some complex formatting may not render |
 | Title matching | Most operations require exact title matches |
 | Checklist state | Requires [Full Disk Access](https://github.com/sweetrb/apple-notes-mcp/blob/main/docs/FULL-DISK-ACCESS.md) to read done/undone state from the database |
-| Checklist **creation** | Not supported. AppleScript's `body of note` setter strips `<input type="checkbox">` and ignores any checklist-styling CSS class. Apple Notes stores checklist items as a protobuf paragraph style (`style_type=103`) that AppleScript doesn't expose, and the SQLite database is read-only. See [Creating Checklists](#creating-checklists) below for the workaround. |
+| Checklist creation needs the bridge | AppleScript strips checklist markup. `create-checklist-item` creates a native item through the Background Operations Shortcut and verifies it. |
 
 ### Creating Checklists
 
-**There is no programmatic way to create a true Apple Notes checklist via AppleScript** — and therefore no way via this MCP server. This is an Apple limitation, not a bug.
+AppleScript cannot create a true Apple Notes checklist. This server uses the
+separately installed Background Operations Shortcut for that native operation.
 
 When a note is created or updated via AppleScript:
 
@@ -1267,13 +1273,11 @@ When a note is created or updated via AppleScript:
 
 Apple Notes stores checklists as a paragraph style (`style_type=103`) inside a gzipped protobuf blob in the `NoteStore.sqlite` database. AppleScript's note `body` interface does not expose paragraph styles, and writing directly to the live database is unsafe.
 
-**Workarounds:**
-
-1. **Create the note with bulleted list items, then convert manually in Notes.app.** Select the items and press <kbd>⇧⌘L</kbd> (or **Format → Checklist**). This converts the list in place and the resulting checklist will be readable by `get-checklist-state` and annotated by `get-note-markdown`.
-2. **Use the Apple Shortcuts app** to script the checklist creation, since Shortcuts can manipulate Notes content at a higher level than AppleScript.
-3. **Read-only checklist support is fully implemented** — once a checklist exists (created manually or by another app), `get-checklist-state` and `get-note-markdown` will read its done/undone state correctly (with Full Disk Access).
-
-If you need to *track* todos programmatically and don't strictly need them rendered as Apple Notes checklist UI, plain markdown-style `- [ ] item` / `- [x] item` lines in a `plaintext` note are a reasonable alternative — they are searchable, human-readable, and can be parsed by downstream tooling.
+To build a checklist, create a note with a distinctive scope phrase, read its
+fresh content hash, and call `create-checklist-item` once for each item. Refresh
+the hash after every write. `get-checklist-state` and `get-note-markdown` read
+the resulting state with Full Disk Access. Without the bridge, create a bulleted
+list and convert it manually with <kbd>⇧⌘L</kbd> in Notes.app.
 
 ### Backslash Escaping (Important for AI Agents)
 

@@ -6,15 +6,15 @@ const request = {
   id,
   expectedContentHash: "before",
   title: "Идеи",
-  scopeText: "Project Shamaal",
-  tags: ["shamaal", "дроп"],
+  scopeText: "Project Aurora",
+  tags: ["aurora", "идея"],
 };
 const snapshot = (): NativeTagSnapshot => ({
   title: "Идеи",
   contentHash: "before",
-  plaintext: "Идеи Project Shamaal #shamaal",
+  plaintext: "Идеи Project Aurora #aurora",
   rich: {
-    text: "Идеи Project Shamaal #shamaal",
+    text: "Идеи Project Aurora #aurora",
     links: [{ start: 0, length: 4, text: "Идеи", url: "notes://showNote?identifier=ABC" }],
     nativeTags: [],
     nativeObjectIds: [],
@@ -27,7 +27,7 @@ function fixture() {
   const before = snapshot();
   const after = structuredClone(before);
   after.contentHash = "after";
-  after.rich.nativeTags = ["shamaal", "дроп"];
+  after.rich.nativeTags = ["aurora", "идея"];
   after.rich.text += "\n\ufffc \ufffc";
   after.rich.nativeObjectIds = ["a", "b"];
   after.rich.hasNativeObjects = true;
@@ -47,13 +47,13 @@ describe("native Notes tags", () => {
   it("verifies native tags, original text and real link destinations", () => {
     const { deps } = fixture();
     expect(addNativeTags(request, deps)).toMatchObject({
-      added: ["shamaal", "дроп"],
+      added: ["aurora", "идея"],
       contentHash: "after",
     });
     expect(deps.run).toHaveBeenCalledWith({
       title: "Идеи",
-      scopeText: "Project Shamaal",
-      tags: ["shamaal", "дроп"],
+      scopeText: "Project Aurora",
+      tags: ["aurora", "идея"],
     });
   });
   it("rejects stale revisions before invoking Shortcuts", () => {

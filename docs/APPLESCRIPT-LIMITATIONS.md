@@ -1,12 +1,11 @@
 # AppleScript Limitations
 
-Apple Notes is automated through its AppleScript dictionary. A few features that
-exist in the Notes UI are simply **not exposed to AppleScript**, so no script can
-read or write them. Where this server recovers one of them anyway, it does so by
-reading Notes' private `NoteStore.sqlite` store **read-only** — which needs
-[Full Disk Access](./FULL-DISK-ACCESS.md). Each section below says which case it
-is. This page documents what was investigated, how it was verified, and the
-conclusion, so the limitation isn't re-investigated every release.
+Apple Notes is primarily automated through its AppleScript dictionary. A few
+features in the Notes UI are not exposed there. This server reads some of them
+from Notes' private `NoteStore.sqlite` store **read-only**, which needs
+[Full Disk Access](./FULL-DISK-ACCESS.md), and performs supported native writes
+through packaged Apple Shortcuts workflows. Each section distinguishes these
+paths so the AppleScript limitations are not mistaken for server limitations.
 
 The full set of properties Notes exposes on a `note` is:
 
@@ -19,7 +18,8 @@ shared, body, id, name, plaintext
 
 ## Pinned notes (#28)
 
-**Status: not feasible via AppleScript; readable via the NoteStore database.**
+**Status: not feasible via AppleScript; readable via the NoteStore database and
+writable through the Background Operations Shortcut.**
 The Notes UI lets you pin a note to the top of a folder, but the `note` class
 has no `pinned` property. Asking for it raises error `-1700`:
 
@@ -33,7 +33,7 @@ end tell
 There is no alternative property, element, or command (`pin`, `pinned`,
 `favorite`, …) in the dictionary. Pinned state lives only in Notes' private
 Core Data store (`NoteStore.sqlite`), which is not part of the scriptable
-surface, and there is no supported way to *set* it at all.
+surface.
 
 Reading it, however, did turn out to be worth doing. Since 2.5.0 the BETA
 `get-note-metadata` tool queries `ZISPINNED` on `ZICCLOUDSYNCINGOBJECT` in that
@@ -43,14 +43,14 @@ changes across macOS releases. It requires
 [Full Disk Access](./FULL-DISK-ACCESS.md) and is marked BETA precisely because
 the schema is version-dependent.
 
-**Conclusion:** pin state is **readable** (BETA, from the NoteStore database,
-Full Disk Access required) but **not settable** — and setting will not be added
-while Notes lacks a scriptable property. If a future macOS exposes one, revisit
-by re-running the probe above.
+**Conclusion:** pin state is readable from the NoteStore database with Full Disk
+Access. `set-note-pinned` sets an explicit state through the separately installed
+Background Operations Shortcut and verifies the result by reading the metadata.
 
 ## Note-to-note links (#30)
 
-**Status: link *relationships* are not exposed; a shareable deep link is.**
+**Status: link relationships are not exposed to AppleScript; rich-data reads and
+the Background Operations Shortcut recover the supported workflows.**
 Apple Notes lets you insert a link from one note to another in the UI, but
 AppleScript exposes no property or element for that relationship:
 
@@ -84,31 +84,32 @@ It **is** wrapped, as `show-note`, `show-folder`, `show-account`, and
 something useful on a machine with an active desktop session; to read a note's
 content, use `get-note-content` / `get-note-markdown` instead.
 
-**Conclusion:** link relationships between notes cannot be read, so a "list
-links in this note" feature is not possible, and links cannot be inserted into a
-body. To hand a note to a person or another app, use `get-note-link`; to address
-a note in a follow-up tool call, use the `id` returned by every read tool.
+**Conclusion:** `get-note-content` and `get-note-markdown` restore links from the
+note's rich data, `get-note-link` retrieves a target deep link, and
+`insert-note-link` appends it through the separately installed Background
+Operations Shortcut. Dynamic-title link objects and generic AppleScript link
+enumeration remain unavailable.
 
 ## Tags / hashtags (#29)
 
-**Status: parsed from the body, not first-class.** Apple Notes "tags" are inline
+**Status: body hashtags and native tags are reported separately; native tag
+writes use packaged Shortcuts workflows.** Apple Notes "tags" are inline
 `#hashtag` tokens you type into a note's text. They are **not** a scriptable
 property — the `note` class exposes no `tags` element, and the tag relationship
-lives only in Notes' private Core Data store. So the only way to surface a
-note's tags via AppleScript is to read them back out of the body text.
+lives only in Notes' private Core Data store.
 
-This server does that: `get-note-content` parses the body and returns the tags
-as `hashtags` in its `structuredContent` (see `src/utils/hashtags.ts`). The
+`get-note-content` parses the body and returns textual tags as `hashtags`, while
+`nativeTags` reports actual native tag objects recovered from rich data. The
 rules match Notes' own behaviour — a token is `#` followed by letters/digits/
 underscores containing **at least one letter**, so `#123` is not a tag; tokens
 are de-duplicated case-insensitively.
 
 Two related caveats:
 
-- The `tags` parameter on `create-note` is an application-level pass-through. It
-  is stored on the returned object but Notes does **not** persist it, and it does
-  **not** create real `#hashtags` in the body. To make a real tag, put `#tag`
-  in the note content.
+- The `tags` parameter on `create-note` does not create native tags. Use
+  `add-native-tags` with the separate Native Tags Shortcut after creating and
+  reading the note. Plain `#hashtags` remain useful searchable content but are
+  not proof of native registration.
 - **Smart folders are not scriptable.** Notes' tag-driven Smart Folders cannot be
   created, read, or enumerated via AppleScript; there is no `smart folder` class
   in the dictionary. Only regular folders are scriptable.
