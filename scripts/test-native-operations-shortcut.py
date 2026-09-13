@@ -15,6 +15,12 @@ class BridgeTests(unittest.TestCase):
             if name == 'is.workflow.actions.appendnote':
                 self.assertIn('WFNote', p)
                 self.assertIn('WFInput', p)
+                self.assertEqual(p['WFInput']['WFSerializationType'], 'WFTextTokenString')
+                self.assertEqual(p['WFInput']['Value']['string'], '\ufffc')
+                self.assertEqual(p['WFInput']['Value']['attachmentsByRange']['{0, 1}']['Type'], 'ActionOutput')
+                self.assertEqual(p['AppIntentDescriptor']['AppIntentIdentifier'], 'AppendToNoteLinkAction')
+                self.assertNotIn('text', p)
+                self.assertNotIn('entity', p)
             if name in ['com.apple.Notes.CreateChecklistItemLinkAction', 'com.apple.Notes.CreateTagLinkAction']:
                 self.assertFalse(p['OpenWhenRun'])
             if name == 'com.apple.Notes.PinNotesLinkAction':

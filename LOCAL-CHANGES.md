@@ -1,20 +1,24 @@
-# Local build: 2.8.2-local.4
+# Local build: 2.8.2-local.5
 
-The running MCP confirmed local.4's capabilities on 2026-09-06; both configured
-Shortcuts bridges are installed. This build adds 15 tools for folder
-rename, native object/table inspection, file insertion, and gated native
-operations through a separately signed Background Operations shortcut.
+Local.5 was live-validated on 2026-09-13 with the installed Background
+Operations v5 bridge. It keeps local.4's folder, attachment, tag and native
+inspection tools and enables native append, checklist creation, table creation,
+pinning and static Notes-link insertion.
 
 Live checks on 2026-09-05 verified folder rename with unchanged folder/note IDs,
 file insertion with exact fetched bytes, and native table decoding with Cyrillic
-and emoji. Background Operations v4 is installed. Tag removal and replacement
-passed live preservation checks; replacement adds through the verified Native
-Tags bridge before removing through v4. Append, checklist creation, table
-creation, link insertion and pinning still require diagnosis of interactive
-parameter prompts and remain disabled. The original test note was used only
-for these isolated checks.
-The final suite passed 666 tests; the built MCP passed all 7 output-schema
-contract tests. Four bridge-generator tests, TypeScript and ESLint checks passed. File insertion deduplicates
+and emoji. Tag removal and replacement passed live preservation checks;
+replacement adds through the verified Native Tags bridge before removal. V5's
+native-editor `WFInput` serialization removes the interactive append prompt.
+Plaintext, semantic HTML, bounded Markdown, a real checklist item, a native
+table with Cyrillic and emoji, pin and unpin, and a retrieved internal Notes
+link all passed exact-ID readback on one rich note while preserving prior
+objects and links. A project-note write also confirmed the native-tag edge case:
+appended visible text is verified from Notes HTML while rich objects and links
+remain independently checked. Temporary diagnostic notes are removed after validation.
+
+The final suite passes all 671 tests. Bridge-generator tests, TypeScript,
+ESLint and the production bundle build also pass. File insertion deduplicates
 repeated references to the same native attachment ID before verifying bytes.
 Native table/attachment deletion failed in both supported routes on this macOS
 and stays unavailable. See `get-capabilities` and `shortcuts/README.md`.
@@ -104,8 +108,9 @@ corepack pnpm test
 corepack pnpm run build
 ```
 
-Codex uses the separately installed `2.8.2-local.4` bundle and the verified
-native-tag Shortcut UUID. The previous local.1, local.2 and local.3 builds are retained.
+Codex is configured to use the separately installed `2.8.2-local.5` bundle
+with Background Operations v5 and the verified native-tag Shortcut UUID after
+its next host restart. Previous local builds are retained.
 The original `2.8.2` bundle remains installed, allowing rollback by changing the
 MCP command back to that version. The source checkout is on
-`fix/rich-note-links`; no changes have been published upstream.
+`fix/rich-note-links` and is published to the personal GitHub fork.

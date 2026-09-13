@@ -94,9 +94,16 @@ delete-note id="x-coredata://ABC/ICNote/p123"
 - **Do not hand-roll read-modify-write from `get-note-content`.** That body is lossy for image-heavy notes: inline base64 images over `APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES` (default 256 KB) come back as `[inline image omitted: …]` placeholders, flagged as `strippedImages` / `truncated` in `structuredContent`. Writing it back with `update-note` replaces the real images with that text.
 - Both `append-to-note` and `update-note` rewrite the full body, so run `list-attachments` first when a note may hold embedded files.
 
-### Checklist Creation Is Not Supported
+### Native checklist creation
 
-**You cannot create an Apple Notes checklist (the interactive ☐ / ☑ items) via this MCP server.** This is an Apple Notes limitation, not a server bug.
+Use `create-checklist-item` to append one real, unchecked Apple Notes checklist
+item to an existing exact note. It requires the note ID, a fresh content hash,
+and a unique scope phrase. The installed Background Operations v5 Shortcut does
+the native mutation; the MCP verifies the new item and preservation of the
+existing content and objects.
+
+HTML or Markdown checkbox syntax sent to `create-note`, `update-note`, or the
+ordinary AppleScript append path still does not create a native checklist.
 
 When you send checklist HTML or markdown to `create-note` or `update-note`:
 
@@ -108,11 +115,13 @@ When you send checklist HTML or markdown to `create-note` or `update-note`:
 
 Apple Notes stores checklists as a paragraph style inside a gzipped protobuf blob. AppleScript's `body` interface does not expose paragraph styles, so there is no HTML or markdown input that produces a real checklist.
 
-**What to do when a user asks for a checklist note:**
+**For a new checklist note:**
 
 1. Create the note with `<ul><li>…</li></ul>` items (HTML) or `- ` bullet lines (plaintext) — the list structure is preserved.
-2. Tell the user to open the note in Notes.app, select the list items, and press **⇧⌘L** (or **Format → Checklist**) to convert them.
-3. Once converted, `get-checklist-state` and `get-note-markdown` can read the done/undone state correctly.
+2. Read the new note to obtain its fresh content hash, then call
+   `create-checklist-item` once per item, refreshing the hash after each write.
+3. `get-checklist-state`, `get-native-objects`, and `get-note-markdown` can read
+   the resulting checklist state.
 
 Do not try alternative HTML class names, data attributes, or Unicode characters like `☐` — none of them produce a real checklist. The interface to set paragraph styles simply isn't exposed.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);
+import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -39485,6 +39485,34 @@ var dbPath = join2(homedir2(), "Library/Group Containers/group.com.apple.notes/N
 var safeUrl = (url) => /^(?:https?:\/\/|notes:\/\/|applenotes:|mailto:)/i.test(url) && !Array.from(url).some((char) => char.charCodeAt(0) < 32);
 var escapeAttribute = (text) => text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 var normalized = (text) => text.replace(/[\s\ufffc]/gu, "");
+function styleValue(field) {
+  if (!(field.value instanceof Uint8Array)) return field.value;
+  if (field.fieldNumber === 2) {
+    const data = field.value, kept = [];
+    let offset = 0;
+    try {
+      while (offset < data.length) {
+        const start = offset;
+        let tag, length = -1;
+        [tag, offset] = decodeVarint(data, offset);
+        const wire = tag & 7;
+        if (wire === 0) [, offset] = decodeVarint(data, offset);
+        else if (wire === 1) offset += 8;
+        else if (wire === 5) offset += 4;
+        else if (wire === 2) {
+          [length, offset] = decodeVarint(data, offset);
+          offset += length;
+        } else return Buffer.from(data).toString("hex");
+        if (offset > data.length) return Buffer.from(data).toString("hex");
+        if (!(tag >>> 3 === 9 && wire === 2 && length === 16)) kept.push(data.slice(start, offset));
+      }
+      return Buffer.concat(kept).toString("hex");
+    } catch {
+      return Buffer.from(data).toString("hex");
+    }
+  }
+  return Buffer.from(field.value).toString("hex");
+}
 function parseRichNote(data, nativeTags = []) {
   const doc = decodeMessage(data);
   const wrapper = embeddedMessage(getField(doc, 2));
@@ -39509,10 +39537,7 @@ function parseRichNote(data, nativeTags = []) {
       start: position,
       length,
       signature: JSON.stringify(
-        fields.filter((f) => f.fieldNumber >= 2 && f.fieldNumber <= 12 || f.fieldNumber === 14).map((f) => [
-          f.fieldNumber,
-          f.value instanceof Uint8Array ? Buffer.from(f.value).toString("hex") : f.value
-        ])
+        fields.filter((f) => f.fieldNumber >= 2 && f.fieldNumber <= 12 || f.fieldNumber === 14).map((f) => [f.fieldNumber, styleValue(f)])
       )
     });
     const url = stringValue(getField(fields, 9));
@@ -43073,7 +43098,7 @@ function appendMarkdownHtml(markdown) {
 }
 
 // src/services/backgroundNotes.ts
-var BACKGROUND_SHORTCUT = "Apple Notes MCP - Background Operations v4";
+var BACKGROUND_SHORTCUT = "Apple Notes MCP - Background Operations v5";
 var backgroundStatus = () => nativeTagsStatus(process.env.APPLE_NOTES_MCP_BACKGROUND_SHORTCUT || BACKGROUND_SHORTCUT);
 var nativeTagBridgeStatus = () => nativeTagsStatus();
 function readBackgroundSnapshot(manager, id2) {
@@ -43283,6 +43308,24 @@ function mutateBackground(request, operation, data, verify, deps) {
     } : {}
   };
 }
+function assertAppendedHtmlLinks(previousCount, links, html) {
+  const remaining = links.slice(previousCount);
+  for (const expected of htmlLinks(html)) {
+    const index = remaining.findIndex(
+      (link) => linkSignature([link]) === linkSignature([expected])
+    );
+    if (index < 0) throw new Error("Appended HTML link not verified");
+    remaining.splice(index, 1);
+  }
+}
+function assertAppendedVisibleText(beforeHtml, afterHtml, expected) {
+  const before = comparableVisibleText(beforeHtml);
+  const after = comparableVisibleText(afterHtml);
+  if (!after.startsWith(before)) throw new Error("Appended text not verified");
+  const suffix = after.slice(before.length).replace(/\s+/gu, " ").trim();
+  const wanted = expected.replace(/\s+/gu, " ").trim();
+  if (!suffix || !suffix.includes(wanted)) throw new Error("Appended text not verified");
+}
 function appendNative(manager, request) {
   validateAppendContent(request.content, request.format);
   if (request.format === "markdown")
@@ -43301,15 +43344,10 @@ function appendNative(manager, request) {
     { text },
     (before, after) => {
       assertPreserved(before, after, { append: true });
-      const suffix = after.rich.text.slice(before.rich.text.trimEnd().length);
       const expected = request.format === "html" ? comparableVisibleText(request.content) : request.format === "plaintext" ? request.content : null;
-      if (!suffix.trim() || expected && !suffix.replace(/\s+/gu, " ").includes(expected.replace(/\s+/gu, " ").trim()))
-        throw new Error("Appended text not verified");
+      if (expected) assertAppendedVisibleText(before.html, after.html, expected);
       if (request.format === "html")
-        for (const link of htmlLinks(request.content)) {
-          if (!after.rich.links.slice(before.rich.links.length).some((l) => l.url === link.url && l.text === link.text))
-            throw new Error("Appended HTML link not verified");
-        }
+        assertAppendedHtmlLinks(before.rich.links.length, after.rich.links, request.content);
     },
     backgroundDependencies(manager)
   );
@@ -43449,18 +43487,17 @@ function parseNoteTable(compressed) {
 
 // src/tools/backgroundOperations.ts
 var VERIFIED_BACKGROUND = /* @__PURE__ */ new Set([
+  "append-native",
+  "create-checklist-item",
+  "create-table",
+  "insert-note-link",
+  "set-note-pinned",
   "rename-folder",
   "add-attachment",
   "remove-native-tags",
   "replace-native-tag"
 ]);
-var LIVE_VALIDATION_BLOCKERS = {
-  "append-native": "Live validation failed: Shortcuts requested input or timed out; exact appended content was not verified",
-  "create-checklist-item": "Live validation failed: the supplied checklist text was not verified; an interactive input remains unresolved",
-  "create-table": "Native table creation through append was not verified in live tests",
-  "insert-note-link": "Native append did not verify the requested link in live tests",
-  "set-note-pinned": "Pin/unpin passed isolated tests, but did not pass the subsequent native-object note test"
-};
+var LIVE_VALIDATION_BLOCKERS = {};
 var signingRefusal = "Installed Shortcuts refuses to sign this Notes action (unsupported features); no background fallback is enabled";
 var UNAVAILABLE = {
   "delete-attachment": "Notes AppleScript delete returns AppleEvent handler failed; the native Shortcuts delete action also cannot be signed",
@@ -43531,7 +43568,7 @@ function registerBackgroundOperations(server2, manager) {
       } catch {
         bridge = {
           installed: false,
-          shortcut: "Apple Notes MCP - Background Operations v4",
+          shortcut: "Apple Notes MCP - Background Operations v5",
           error: "Shortcuts helper unavailable"
         };
       }

@@ -921,7 +921,7 @@ Lists all notes shared with collaborators.
 
 ---
 
-### Local background operations (2.8.2-local.4)
+### Local background operations (2.8.2-local.5)
 
 Use `get-capabilities` before native writes. Registered tools may be disabled:
 installation and successful live validation are separate requirements. These
@@ -958,7 +958,7 @@ Requires note `id`, fresh `expectedContentHash`, unique existing `scopeText`,
 `content`, and optional `format` (`plaintext`, semantic `html`, or bounded
 `markdown`). Appends with a visible blank line, preserving existing rich objects.
 Markdown supports headings, flat lists, emphasis and links; unsupported syntax is
-rejected. Tables use `create-table`. Disabled pending live bridge validation.
+rejected. Tables use `create-table`. Live-verified with Background Operations v5.
 
 #### `get-native-objects`
 
@@ -969,24 +969,25 @@ reported explicitly. Does not infer identities from labels.
 #### `create-checklist-item`
 
 Adds one unchecked native checklist item using `id`, `expectedContentHash`,
-`scopeText`, and single-line `text`. Disabled pending live bridge validation.
+`scopeText`, and single-line `text`. Live-verified with Background Operations v5.
 
 #### `create-table`
 
 Appends a native table using `id`, `expectedContentHash`, `scopeText`, and
 rectangular `rows` (arrays of strings). Verifies native identity and all cells;
-does not substitute a text table. Disabled pending live bridge validation.
+does not substitute a text table. Live-verified with Background Operations v5.
 
 #### `set-note-pinned`
 
 Requires `id`, `expectedContentHash`, `scopeText`, `expectedPinned`, and desired
 boolean `pinned`. Sets an explicit state and verifies metadata without rewriting
-the note. Disabled pending live bridge validation.
+the note. Live-verified for pin and unpin with Background Operations v5.
 
 #### `remove-native-tags`
 
 Removes `tags` from one note using `id`, `expectedContentHash`, and `scopeText`.
-Does not delete global tag definitions. Live-verified with Background Operations v4.
+Does not delete global tag definitions. Live-verified with Background Operations v4;
+v5 retains the same removal branch.
 
 #### `replace-native-tag`
 
@@ -994,7 +995,7 @@ Requires `oldTag`, `newTag`, and explicit `notes`, each with `id`,
 `expectedContentHash`, and `scopeText`. Adds and verifies the new tag before
 removing the old; reports partial progress. Smart Folder rules are not renamed.
 Live-verified using Native Tags for addition and Background Operations v4 for
-removal. Both bridges must be installed. Creation through the generic background
+removal; v5 retains the same removal branch. Both bridges must be installed. Creation through the generic background
 bridge did not pass live validation, so it is not used for additions.
 
 #### `list-native-tags`
@@ -1006,7 +1007,8 @@ note IDs within that folder. Reports partial reads.
 
 Requires `id`, `expectedContentHash`, `scopeText`, `linkedNoteId`, and optional
 `label`. Retrieves and appends the real Notes link; its label is static, not a
-dynamic-title object. Disabled pending live bridge validation.
+dynamic-title object. Live-verified with a retrieved real Notes URL through
+Background Operations v5.
 
 #### `add-attachment`
 

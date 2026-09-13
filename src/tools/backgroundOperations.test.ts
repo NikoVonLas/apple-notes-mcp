@@ -33,20 +33,24 @@ describe("background capability boundaries", () => {
     const r = await get("get-capabilities")[2]({});
     expect(r.structuredContent.bridge.installed).toBe(false);
     expect(r.structuredContent.operations["append-native"].available).toBe(false);
+    expect(r.structuredContent.operations["append-native"].verified).toBe(true);
     expect(r.structuredContent.operations["rename-folder"].available).toBe(true);
     expect(r.structuredContent.unavailable["set-checklist-item"]).toMatch(/unsupported features/);
   });
-  it("does not execute unverified native actions in normal operation", async () => {
-    vi.stubEnv("APPLE_NOTES_MCP_ALLOW_UNVERIFIED", "");
-    const get = fixture();
-    const r = await get("create-checklist-item")[2]({
-      id: "x-coredata://ABC/ICNote/p1",
-      expectedContentHash: "sha256:" + "0".repeat(64),
-      scopeText: "Unique project marker",
-      text: "item",
+  it("reports live-verified native creation as available with v5 installed", async () => {
+    vi.mocked(backgroundStatus).mockReturnValueOnce({
+      installed: true,
+      shortcut: "Apple Notes MCP - Background Operations v5",
     });
-    expect(r.isError).toBe(true);
-    expect(r.content[0].text).toMatch(/validation/);
+    const r = await fixture()("get-capabilities")[2]({});
+    expect(r.structuredContent.operations["append-native"]).toMatchObject({
+      verified: true,
+      available: true,
+    });
+    expect(r.structuredContent.operations["create-checklist-item"]).toMatchObject({
+      verified: true,
+      available: true,
+    });
   });
   it("reports a concrete platform failure for disabled attachment deletion", async () => {
     const get = fixture();

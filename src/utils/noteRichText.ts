@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import {
   decodeMessage,
+  decodeVarint,
   embeddedMessage,
   getField,
   getFields,
@@ -56,6 +57,43 @@ const escapeAttribute = (text: string) =>
   text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 const normalized = (text: string) => text.replace(/[\s\ufffc]/gu, "");
 
+function styleValue(field: ReturnType<typeof decodeMessage>[number]): unknown {
+  if (!(field.value instanceof Uint8Array)) return field.value;
+  if (field.fieldNumber === 2) {
+    // Notes regenerates paragraph IDs on the first native edit of imported HTML.
+    // ParagraphStyle field 9 is a 16-byte paragraph UUID, not visual formatting:
+    // https://github.com/shareup/nanotes/blob/main/notestore.proto
+    // Keep every other field (including checklist identity/state and unknowns).
+    // Keep raw bytes for all other fields, including fixed-width/unknown fields
+    // that the general purpose decoder skips. Malformed input stays conservative.
+    const data = field.value,
+      kept: Uint8Array[] = [];
+    let offset = 0;
+    try {
+      while (offset < data.length) {
+        const start = offset;
+        let tag: number,
+          length = -1;
+        [tag, offset] = decodeVarint(data, offset);
+        const wire = tag & 7;
+        if (wire === 0) [, offset] = decodeVarint(data, offset);
+        else if (wire === 1) offset += 8;
+        else if (wire === 5) offset += 4;
+        else if (wire === 2) {
+          [length, offset] = decodeVarint(data, offset);
+          offset += length;
+        } else return Buffer.from(data).toString("hex");
+        if (offset > data.length) return Buffer.from(data).toString("hex");
+        if (!(tag >>> 3 === 9 && wire === 2 && length === 16)) kept.push(data.slice(start, offset));
+      }
+      return Buffer.concat(kept).toString("hex");
+    } catch {
+      return Buffer.from(data).toString("hex");
+    }
+  }
+  return Buffer.from(field.value).toString("hex");
+}
+
 export function parseRichNote(data: Uint8Array, nativeTags: string[] = []): RichNote {
   const doc = decodeMessage(data);
   const wrapper = embeddedMessage(getField(doc, 2));
@@ -82,10 +120,7 @@ export function parseRichNote(data: Uint8Array, nativeTags: string[] = []): Rich
       signature: JSON.stringify(
         fields
           .filter((f) => (f.fieldNumber >= 2 && f.fieldNumber <= 12) || f.fieldNumber === 14)
-          .map((f) => [
-            f.fieldNumber,
-            f.value instanceof Uint8Array ? Buffer.from(f.value).toString("hex") : f.value,
-          ])
+          .map((f) => [f.fieldNumber, styleValue(f)])
       ),
     });
     const url = stringValue(getField(fields, 9));

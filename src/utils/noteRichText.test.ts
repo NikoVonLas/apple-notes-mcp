@@ -57,6 +57,36 @@ function read(note: RichNote): RichRead {
 }
 
 describe("Notes rich text", () => {
+  it("ignores regenerated paragraph UUIDs in style comparison but keeps rich revisions distinct", () => {
+    const doc = (id: number) =>
+      document("Bold", [
+        Buffer.concat([
+          run(4),
+          b(2, Buffer.concat([n(3, 1), b(9, Buffer.alloc(16, id))])),
+          n(5, 1),
+        ]),
+      ]);
+    const before = parseRichNote(doc(1)),
+      after = parseRichNote(doc(2));
+    expect(before.styleRuns).toEqual(after.styleRuns);
+    expect(before.revision).not.toBe(after.revision);
+  });
+  it("retains paragraph formatting, checklist identities and unknown fields in style comparison", () => {
+    const style = (paragraph: Buffer) =>
+      parseRichNote(document("A", [Buffer.concat([run(1), b(2, paragraph)])])).styleRuns;
+    expect(style(n(2, 1))).not.toEqual(style(n(2, 2)));
+    expect(style(n(4, 1))).not.toEqual(style(n(4, 2)));
+    expect(style(n(8, 0))).not.toEqual(style(n(8, 1)));
+    expect(style(b(5, Buffer.concat([b(1, Buffer.alloc(16, 1)), n(2, 0)])))).not.toEqual(
+      style(b(5, Buffer.concat([b(1, Buffer.alloc(16, 2)), n(2, 0)])))
+    );
+    expect(style(b(9, "unexpected"))).not.toEqual(style(b(9, "different")));
+    expect(style(n(15, 1))).not.toEqual(style(n(15, 2)));
+    expect(style(Buffer.from([0x7d, 1, 0, 0, 0]))).not.toEqual(
+      style(Buffer.from([0x7d, 2, 0, 0, 0]))
+    );
+    expect(style(Buffer.from([0x4a, 16, 1]))).not.toEqual(style(Buffer.from([0x4a, 16, 2])));
+  });
   it("reads only the requested note read-only and ignores stale native tag rows", () => {
     const attachment = Buffer.concat([run(1), b(12, b(1, "active-tag"))]);
     const blob = gzipSync(document("\ufffc", [attachment])).toString("hex");

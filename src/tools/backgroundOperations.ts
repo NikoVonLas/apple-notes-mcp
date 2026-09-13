@@ -22,21 +22,17 @@ import { readRichNote } from "../utils/noteRichText.js";
 
 // Enabled only after a live exact-ID preservation test on this build.
 export const VERIFIED_BACKGROUND = new Set<string>([
+  "append-native",
+  "create-checklist-item",
+  "create-table",
+  "insert-note-link",
+  "set-note-pinned",
   "rename-folder",
   "add-attachment",
   "remove-native-tags",
   "replace-native-tag",
 ]);
-const LIVE_VALIDATION_BLOCKERS: Record<string, string> = {
-  "append-native":
-    "Live validation failed: Shortcuts requested input or timed out; exact appended content was not verified",
-  "create-checklist-item":
-    "Live validation failed: the supplied checklist text was not verified; an interactive input remains unresolved",
-  "create-table": "Native table creation through append was not verified in live tests",
-  "insert-note-link": "Native append did not verify the requested link in live tests",
-  "set-note-pinned":
-    "Pin/unpin passed isolated tests, but did not pass the subsequent native-object note test",
-};
+const LIVE_VALIDATION_BLOCKERS: Record<string, string> = {};
 const signingRefusal =
   "Installed Shortcuts refuses to sign this Notes action (unsupported features); no background fallback is enabled";
 export const UNAVAILABLE = {
@@ -123,7 +119,7 @@ export function registerBackgroundOperations(server: McpServer, manager: AppleNo
       } catch {
         bridge = {
           installed: false,
-          shortcut: "Apple Notes MCP - Background Operations v4",
+          shortcut: "Apple Notes MCP - Background Operations v5",
           error: "Shortcuts helper unavailable",
         };
       }

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   assertPreserved,
+  assertAppendedHtmlLinks,
+  assertAppendedVisibleText,
   mutateBackground,
   validateAppendContent,
   type BackgroundSnapshot,
@@ -46,6 +48,50 @@ const pinVerify = (before: BackgroundSnapshot, after: BackgroundSnapshot) => {
   if (!after.pinned) throw new Error("pin missing");
 };
 describe("background note mutation boundaries", () => {
+  it("verifies appended text from Notes HTML when native tags replace rich-text ranges", () => {
+    expect(() =>
+      assertAppendedVisibleText(
+        "<div>Existing text</div>",
+        "<div>Existing text</div><div><b>Result</b> #project_tag</div>",
+        "Result #project_tag"
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertAppendedVisibleText(
+        "<div>Existing text</div>",
+        "<div>Existing text</div><div>Different result</div>",
+        "Requested result"
+      )
+    ).toThrow(/not verified/);
+  });
+  it("verifies multiword HTML link labels using the normal link signature", () => {
+    expect(() =>
+      assertAppendedHtmlLinks(
+        1,
+        [
+          { text: "old", url: "https://example.com/old" },
+          { text: "Новая ссылка 🧭", url: "https://example.com/new" },
+        ],
+        '<a href="https://example.com/new">Новая <b>ссылка</b> 🧭</a>'
+      )
+    ).not.toThrow();
+  });
+  it("rejects wrong destinations, relabeling and missing duplicate links", () => {
+    const html = '<a href="https://example.com/new">Новая ссылка</a>';
+    expect(() =>
+      assertAppendedHtmlLinks(0, [{ text: "Новая ссылка", url: "https://example.com/wrong" }], html)
+    ).toThrow(/not verified/);
+    expect(() =>
+      assertAppendedHtmlLinks(0, [{ text: "Другой текст", url: "https://example.com/new" }], html)
+    ).toThrow(/not verified/);
+    expect(() =>
+      assertAppendedHtmlLinks(
+        0,
+        [{ text: "Новая ссылка", url: "https://example.com/new" }],
+        html + html
+      )
+    ).toThrow(/not verified/);
+  });
   it("verifies the native outcome independently of empty transport output", () => {
     const f = fixture();
     expect(

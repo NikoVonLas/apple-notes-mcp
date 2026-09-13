@@ -17,7 +17,7 @@ import { getChecklistItems } from "../utils/checklistParser.js";
 import { appendMarkdownHtml } from "../utils/appendMarkdown.js";
 import { comparableVisibleText } from "../utils/noteRevision.js";
 
-export const BACKGROUND_SHORTCUT = "Apple Notes MCP - Background Operations v4";
+export const BACKGROUND_SHORTCUT = "Apple Notes MCP - Background Operations v5";
 export const backgroundStatus = () =>
   nativeTagsStatus(process.env.APPLE_NOTES_MCP_BACKGROUND_SHORTCUT || BACKGROUND_SHORTCUT);
 export const nativeTagBridgeStatus = () => nativeTagsStatus();
@@ -317,6 +317,36 @@ export function mutateBackground(
   };
 }
 
+export function assertAppendedHtmlLinks(
+  previousCount: number,
+  links: Array<{ text: string; url: string }>,
+  html: string
+) {
+  const remaining = links.slice(previousCount);
+  for (const expected of htmlLinks(html)) {
+    // htmlLinks omits layout whitespace; native ranges retain it. Compare using
+    // the same character-to-URL signature as normal guarded HTML writes.
+    const index = remaining.findIndex(
+      (link) => linkSignature([link]) === linkSignature([expected])
+    );
+    if (index < 0) throw new Error("Appended HTML link not verified");
+    remaining.splice(index, 1);
+  }
+}
+
+export function assertAppendedVisibleText(
+  beforeHtml: string,
+  afterHtml: string,
+  expected: string
+) {
+  const before = comparableVisibleText(beforeHtml);
+  const after = comparableVisibleText(afterHtml);
+  if (!after.startsWith(before)) throw new Error("Appended text not verified");
+  const suffix = after.slice(before.length).replace(/\s+/gu, " ").trim();
+  const wanted = expected.replace(/\s+/gu, " ").trim();
+  if (!suffix || !suffix.includes(wanted)) throw new Error("Appended text not verified");
+}
+
 export function appendNative(
   manager: AppleNotesManager,
   request: BackgroundInput & { content: string; format: "plaintext" | "html" | "markdown" }
@@ -344,27 +374,15 @@ export function appendNative(
     { text },
     (before, after) => {
       assertPreserved(before, after, { append: true });
-      const suffix = after.rich.text.slice(before.rich.text.trimEnd().length);
       const expected =
         request.format === "html"
           ? comparableVisibleText(request.content)
           : request.format === "plaintext"
             ? request.content
             : null;
-      if (
-        !suffix.trim() ||
-        (expected && !suffix.replace(/\s+/gu, " ").includes(expected.replace(/\s+/gu, " ").trim()))
-      )
-        throw new Error("Appended text not verified");
+      if (expected) assertAppendedVisibleText(before.html, after.html, expected);
       if (request.format === "html")
-        for (const link of htmlLinks(request.content)) {
-          if (
-            !after.rich.links
-              .slice(before.rich.links.length)
-              .some((l) => l.url === link.url && l.text === link.text)
-          )
-            throw new Error("Appended HTML link not verified");
-        }
+        assertAppendedHtmlLinks(before.rich.links.length, after.rich.links, request.content);
     },
     backgroundDependencies(manager)
   );
