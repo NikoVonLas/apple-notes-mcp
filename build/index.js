@@ -4199,8 +4199,8 @@ var require_fast_uri = __commonJS({
       } catch {
         return void 0;
       }
-      const { normalized, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme } = normalizeStringWithStatus(value, opts);
-      return malformedAuthorityOrPort || malformedPercentEncoding || malformedSchemeSpecific || malformedHost || malformedScheme ? void 0 : normalized;
+      const { normalized: normalized2, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme } = normalizeStringWithStatus(value, opts);
+      return malformedAuthorityOrPort || malformedPercentEncoding || malformedSchemeSpecific || malformedHost || malformedScheme ? void 0 : normalized2;
     }
     var fastUri = {
       SCHEMES,
@@ -24465,14 +24465,14 @@ var require_turndown_cjs = __commonJS({
         } else if (node.nodeType === 1) {
           replacement = replacementForNode.call(self, node);
         }
-        return join7(output, replacement);
+        return join8(output, replacement);
       }, "");
     }
     function postProcess(output) {
       var self = this;
       this.rules.forEach(function(rule) {
         if (typeof rule.append === "function") {
-          output = join7(output, rule.append(self.options));
+          output = join8(output, rule.append(self.options));
         }
       });
       return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
@@ -24484,7 +24484,7 @@ var require_turndown_cjs = __commonJS({
       if (whitespace.leading || whitespace.trailing) content = content.trim();
       return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
     }
-    function join7(output, replacement) {
+    function join8(output, replacement) {
       var s1 = trimTrailingNewlines(output);
       var s2 = trimLeadingNewlines(replacement);
       var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -30297,7 +30297,7 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   });
   const generateFastpass = (shape) => {
     const doc = new Doc(["shape", "payload", "ctx"]);
-    const normalized = _normalized.value;
+    const normalized2 = _normalized.value;
     const parseStr = (key) => {
       const k = esc(key);
       return `shape[${k}]._zod.run({ value: input[${k}], issues: [] }, ctx)`;
@@ -30305,12 +30305,12 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     doc.write(`const input = payload.value;`);
     const ids = /* @__PURE__ */ Object.create(null);
     let counter = 0;
-    for (const key of normalized.keys) {
+    for (const key of normalized2.keys) {
       ids[key] = `key_${counter++}`;
     }
     doc.write(`const newResult = {}`);
-    for (const key of normalized.keys) {
-      if (normalized.optionalKeys.has(key)) {
+    for (const key of normalized2.keys) {
+      if (normalized2.optionalKeys.has(key)) {
         const id = ids[key];
         doc.write(`const ${id} = ${parseStr(key)};`);
         const k = esc(key);
@@ -39484,6 +39484,311 @@ function getChecklistItems(noteId) {
   return { items };
 }
 
+// src/utils/noteRichText.ts
+import { execFileSync as execFileSync3 } from "node:child_process";
+import { createHash } from "node:crypto";
+import { homedir as homedir2 } from "node:os";
+import { join as join2 } from "node:path";
+import { gunzipSync as gunzipSync2 } from "node:zlib";
+var dbPath = join2(homedir2(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
+var safeUrl = (url) => /^(?:https?:\/\/|notes:\/\/|applenotes:|mailto:)/i.test(url) && !Array.from(url).some((char) => char.charCodeAt(0) < 32);
+var escapeAttribute = (text) => text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+var normalized = (text) => text.replace(/[\s\ufffc]/gu, "");
+function styleValue(field) {
+  if (!(field.value instanceof Uint8Array)) return field.value;
+  if (field.fieldNumber === 2) {
+    const data = field.value, kept = [];
+    let offset = 0;
+    try {
+      while (offset < data.length) {
+        const start = offset;
+        let tag, length = -1;
+        [tag, offset] = decodeVarint(data, offset);
+        const wire = tag & 7;
+        if (wire === 0) [, offset] = decodeVarint(data, offset);
+        else if (wire === 1) offset += 8;
+        else if (wire === 5) offset += 4;
+        else if (wire === 2) {
+          [length, offset] = decodeVarint(data, offset);
+          offset += length;
+        } else return Buffer.from(data).toString("hex");
+        if (offset > data.length) return Buffer.from(data).toString("hex");
+        if (!(tag >>> 3 === 9 && wire === 2 && length === 16)) kept.push(data.slice(start, offset));
+      }
+      return Buffer.concat(kept).toString("hex");
+    } catch {
+      return Buffer.from(data).toString("hex");
+    }
+  }
+  return Buffer.from(field.value).toString("hex");
+}
+function parseRichNote(data, nativeTags = []) {
+  const doc = decodeMessage(data);
+  const wrapper = embeddedMessage(getField(doc, 2));
+  const body = wrapper && embeddedMessage(getField(wrapper, 3));
+  const text = body && stringValue(getField(body, 2));
+  if (!body || text === void 0) throw new Error("Unsupported Notes document structure");
+  const links = [];
+  const nativeObjectIds = [];
+  const objects = [];
+  const checklistItems = [];
+  const styleRuns = [];
+  let position = 0;
+  let hasNativeObjects = false;
+  let hasChecklist = false;
+  for (const run of getFields(body, 5)) {
+    const fields = embeddedMessage(run);
+    if (!fields) throw new Error("Invalid Notes attribute run");
+    const length = varintValue(getField(fields, 1));
+    if (length === void 0 || length < 0 || position + length > text.length)
+      throw new Error("Invalid Notes run length");
+    styleRuns.push({
+      start: position,
+      length,
+      signature: JSON.stringify(
+        fields.filter((f) => f.fieldNumber >= 2 && f.fieldNumber <= 12 || f.fieldNumber === 14).map((f) => [f.fieldNumber, styleValue(f)])
+      )
+    });
+    const url = stringValue(getField(fields, 9));
+    if (url) {
+      if (!safeUrl(url)) throw new Error("Unsupported link scheme in note");
+      const previous = links.at(-1);
+      if (previous?.url === url && previous.start + previous.length === position) {
+        previous.length += length;
+        previous.text += text.slice(position, position + length);
+      } else
+        links.push({ start: position, length, text: text.slice(position, position + length), url });
+    }
+    hasNativeObjects ||= Boolean(getField(fields, 12));
+    const attachment = embeddedMessage(getField(fields, 12));
+    const attachmentId = attachment && stringValue(getField(attachment, 1));
+    if (attachmentId) nativeObjectIds.push(attachmentId);
+    if (attachmentId)
+      objects.push({
+        id: attachmentId,
+        type: stringValue(getField(attachment, 2)) || "unknown",
+        start: position,
+        length
+      });
+    const paragraph = embeddedMessage(getField(fields, 2));
+    hasChecklist ||= Boolean(paragraph && varintValue(getField(paragraph, 1)) === 103);
+    if (paragraph && varintValue(getField(paragraph, 1)) === 103) {
+      const checklist = embeddedMessage(getField(paragraph, 5));
+      const rawId = checklist && getField(checklist, 1)?.value;
+      const itemId = rawId instanceof Uint8Array ? Buffer.from(rawId).toString("hex") : "";
+      const start = text.lastIndexOf("\n", position - 1) + 1;
+      if (itemId && !checklistItems.some((item) => item.id === itemId))
+        checklistItems.push({
+          id: itemId,
+          start,
+          text: text.slice(
+            start,
+            text.indexOf("\n", start) === -1 ? text.length : text.indexOf("\n", start)
+          ),
+          done: checklist ? varintValue(getField(checklist, 2)) === 1 : false
+        });
+    }
+    position += length;
+  }
+  if (position !== text.length) throw new Error("Incomplete Notes attribute runs");
+  return {
+    text,
+    links,
+    nativeTags: hasNativeObjects ? nativeTags : [],
+    nativeObjectIds,
+    hasNativeObjects,
+    hasChecklist,
+    revision: createHash("sha256").update(data).digest("hex"),
+    objects,
+    checklistItems,
+    styleRuns
+  };
+}
+function readRichNote(id) {
+  const pk = /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p([0-9]+)$/i.exec(id)?.[1];
+  if (!pk) throw new Error("Invalid exact note ID");
+  const sql = `BEGIN; SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE=${pk}; SELECT json_group_object(ZIDENTIFIER,ZALTTEXT) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} AND ZTYPEUTI1='com.apple.notes.inlinetextattachment.hashtag'; SELECT json_group_array(json_object('id',ZIDENTIFIER,'pk',Z_PK,'type',COALESCE(ZTYPEUTI1,ZTYPEUTI),'mergeable',hex(COALESCE(ZMERGEABLEDATA1,ZMERGEABLEDATA)),'view',ZATTACHMENTVIEWTYPE)) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} OR ZNOTE=${pk}; COMMIT;`;
+  const rows = execFileSync3("/usr/bin/sqlite3", ["-readonly", dbPath, sql], {
+    encoding: "utf8",
+    timeout: 5e3,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["pipe", "pipe", "pipe"]
+  }).trim().split("\n");
+  if (!rows[0] || !/^[0-9a-f]+$/i.test(rows[0])) throw new Error("No Notes document data");
+  const tags = JSON.parse(rows[1] || "{}");
+  if (!tags || Array.isArray(tags) || typeof tags !== "object" || Object.values(tags).some((tag) => typeof tag !== "string"))
+    throw new Error("Invalid native tags");
+  const rich = parseRichNote(
+    gunzipSync2(Buffer.from(rows[0], "hex"), { maxOutputLength: 32 * 1024 * 1024 })
+  );
+  const tagMap = tags;
+  const objectData = JSON.parse(rows[2] || "[]");
+  if (!Array.isArray(objectData) || objectData.some(
+    (row) => !row || typeof row.id !== "string" || !Number.isInteger(row.pk) || typeof row.mergeable !== "string" || !/^[0-9a-f]*$/i.test(row.mergeable)
+  ))
+    throw new Error("Invalid native object metadata");
+  rich.objectData = objectData.filter((row) => rich.nativeObjectIds.includes(row.id)).sort((a, b) => a.id.localeCompare(b.id));
+  rich.revision = createHash("sha256").update(rich.revision).update(JSON.stringify(rich.objectData)).digest("hex");
+  rich.nativeTagObjectIds = {};
+  for (const id2 of rich.nativeObjectIds)
+    if (tagMap[id2]) {
+      const tag = tagMap[id2].replace(/^#/, "");
+      (rich.nativeTagObjectIds[tag] ||= []).push(id2);
+    }
+  rich.nativeTags = [
+    ...new Set(
+      rich.nativeObjectIds.flatMap((id2) => tagMap[id2] ? [tagMap[id2].replace(/^#/, "")] : [])
+    )
+  ];
+  return rich;
+}
+function decodeEntity(value) {
+  const named = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+    nbsp: " "
+  };
+  if (!value.startsWith("&") || value === "&") return value;
+  const name = value.slice(1).replace(/;$/, "");
+  if (name.startsWith("#")) {
+    const cp = name[1]?.toLowerCase() === "x" ? Number.parseInt(name.slice(2), 16) : Number.parseInt(name.slice(1), 10);
+    if (!Number.isInteger(cp) || cp < 0 || cp > 1114111) throw new Error("Invalid HTML entity");
+    return String.fromCodePoint(cp);
+  }
+  if (!(name in named)) throw new Error("Unsupported HTML entity");
+  return named[name];
+}
+function visibleCharacters(html) {
+  const chars = [];
+  let token = 0;
+  for (const part of html.matchAll(/<[^>]*>|[^<]+/g)) {
+    token++;
+    if (part[0].startsWith("<")) continue;
+    for (const item of part[0].matchAll(
+      /&(?:#[0-9]+;?|#x[0-9a-f]+;?|(?:amp|lt|gt|quot|apos|nbsp)(?:;|(?![a-z0-9=])))|[\s\S]/gi
+    )) {
+      const value = decodeEntity(item[0]);
+      for (let i = 0; i < value.length; i++) {
+        if (/\s/u.test(value[i])) continue;
+        chars.push({
+          value: value[i],
+          start: part.index + item.index,
+          end: part.index + item.index + item[0].length,
+          token
+        });
+      }
+    }
+  }
+  return chars;
+}
+function restoreNoteLinks(html, rich) {
+  const base = html.replace(/<\/?a\b[^>]*>/gi, "");
+  const chars = visibleCharacters(base);
+  if (chars.map((c) => c.value).join("") !== normalized(rich.text))
+    throw new Error("Notes HTML and rich text do not match; retry after sync");
+  const positions = [];
+  for (let i = 0; i < rich.text.length; i++)
+    if (!/[\s\ufffc]/u.test(rich.text[i])) positions.push(i);
+  const inserts = [];
+  for (const link of rich.links) {
+    if (!safeUrl(link.url)) throw new Error("Unsupported link scheme in note");
+    let span;
+    for (let i = 0; i < chars.length; i++) {
+      if (positions[i] < link.start || positions[i] >= link.start + link.length) continue;
+      const c = chars[i];
+      if (span?.token === c.token) span.end = c.end;
+      else {
+        if (span) inserts.push(span);
+        span = { start: c.start, end: c.end, token: c.token, url: link.url };
+      }
+    }
+    if (span) inserts.push(span);
+  }
+  let result = base;
+  for (const span of inserts.sort((a, b) => b.start - a.start))
+    result = result.slice(0, span.start) + `<a href="${escapeAttribute(span.url)}">` + result.slice(span.start, span.end) + "</a>" + result.slice(span.end);
+  return result;
+}
+function enrichNoteRead(id, rawBody) {
+  let metadata;
+  try {
+    const rich = readRichNote(id);
+    metadata = rich;
+    const content = restoreNoteLinks(rawBody, rich);
+    const writable = !rich.hasNativeObjects && !rich.hasChecklist;
+    return {
+      content,
+      links: rich.links,
+      nativeTags: rich.nativeTags,
+      complete: writable,
+      writable,
+      revision: rich.revision,
+      ...!writable ? {
+        warning: "Native tags, inline objects or checklists are present. Their state is not writable through AppleScript; full-body edits are blocked to preserve them."
+      } : {}
+    };
+  } catch {
+    return {
+      content: rawBody,
+      links: metadata?.links ?? [],
+      nativeTags: metadata?.nativeTags ?? [],
+      complete: false,
+      writable: false,
+      revision: metadata?.revision ?? "unavailable",
+      warning: "Rich Notes metadata could not be read or matched. Links/native tags may be missing from this view. Full-body edits are blocked; check Full Disk Access and retry after sync."
+    };
+  }
+}
+function richContentHash(rawBody, rich) {
+  return `sha256:${createHash("sha256").update(rawBody).update("\0").update(rich.revision).digest("hex")}`;
+}
+function htmlLinks(html) {
+  const links = [];
+  for (const match of html.matchAll(
+    /<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>([\s\S]*?)<\/a>/gi
+  )) {
+    const url = (match[1] ?? match[2]).replace(/&(?:#[0-9]+|#x[0-9a-f]+|[a-z]+);/gi, decodeEntity);
+    if (!safeUrl(url)) throw new Error("Unsupported link scheme");
+    links.push({
+      text: visibleCharacters(match[3]).map((c) => c.value).join(""),
+      url
+    });
+  }
+  return links;
+}
+function linkSignature(links) {
+  return JSON.stringify(
+    links.flatMap(
+      (link) => normalized(link.text).split("").map((char) => [char, link.url])
+    )
+  );
+}
+function assertLinkedWrite(rich, content, format, allowLinkChanges = false) {
+  if (!rich.writable) throw new Error(rich.warning || "Rich note cannot be safely rewritten");
+  if (rich.links.length && format !== "html" && !allowLinkChanges)
+    throw new Error(
+      "This note has links. Use format=html and preserve the linked HTML returned by get-note-content."
+    );
+  const next = format === "html" ? htmlLinks(content) : [];
+  if (allowLinkChanges) return;
+  const needed = /* @__PURE__ */ new Map();
+  for (const link of rich.links) {
+    const key = linkSignature([link]);
+    needed.set(key, (needed.get(key) || 0) + 1);
+  }
+  const incoming = linkSignature(next);
+  for (const [key, count] of needed) {
+    const sequence = key.slice(1, -1);
+    if (incoming.split(sequence).length - 1 < count)
+      throw new Error(
+        "Update would remove or change an existing link. Preserve its label and URL from get-note-content."
+      );
+  }
+}
+
 // src/utils/attachmentFs.ts
 import {
   existsSync as existsSync2,
@@ -39495,11 +39800,11 @@ import {
   rmSync,
   statSync
 } from "fs";
-import { dirname, isAbsolute, join as join2, relative, resolve, sep } from "path";
-import { homedir as homedir2, tmpdir } from "os";
+import { dirname, isAbsolute, join as join3, relative, resolve, sep } from "path";
+import { homedir as homedir3, tmpdir } from "os";
 function allowedSaveRoots() {
   return [
-    resolve(homedir2()),
+    resolve(homedir3()),
     resolve(tmpdir()),
     "/Volumes",
     "/private/var/folders",
@@ -39573,7 +39878,7 @@ function assertSafeSavePath(p, roots = allowedSaveRoots()) {
   if (suffix.split(sep).includes("..")) {
     throw new Error(`Refusing to write outside allowed locations (home, temp, /Volumes): "${abs}"`);
   }
-  const canonicalDest = suffix ? join2(canonicalAncestor, suffix) : canonicalAncestor;
+  const canonicalDest = suffix ? join3(canonicalAncestor, suffix) : canonicalAncestor;
   const allowed = canonicalRoots(roots);
   if (!isWithinRoots(canonicalAncestor, allowed) || !isWithinRoots(canonicalDest, allowed)) {
     throw new Error(
@@ -39623,8 +39928,8 @@ function cleanupTempDir(dir) {
 // src/services/appleNotesManager.ts
 var import_turndown = __toESM(require_turndown_cjs(), 1);
 import { existsSync as existsSync3 } from "fs";
-import { homedir as homedir3 } from "os";
-import { join as join3 } from "path";
+import { homedir as homedir4 } from "os";
+import { join as join4 } from "path";
 var FIELD_SEP = "";
 var RECORD_SEP = "";
 var AS_FIELD_SEP = "(ASCII character 31)";
@@ -39702,8 +40007,8 @@ function parseAppleScriptDate(appleScriptDate) {
     return isNaN(dt.getTime()) ? /* @__PURE__ */ new Date() : dt;
   }
   const withoutPrefix = s.replace(/^date\s+/, "");
-  const normalized = withoutPrefix.replace(" at ", " ");
-  const parsed = new Date(normalized);
+  const normalized2 = withoutPrefix.replace(" at ", " ");
+  const parsed = new Date(normalized2);
   return isNaN(parsed.getTime()) ? /* @__PURE__ */ new Date() : parsed;
 }
 function buildAppleScriptDateVar(date3, varName = "thresholdDate") {
@@ -39825,11 +40130,11 @@ function getNoteLinkFromDB(coreDataId) {
   const match = coreDataId.match(/\/p(\d+)$/);
   if (!match) return null;
   const pk = parseInt(match[1], 10);
-  const dbPath = join3(homedir3(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
-  if (!existsSync3(dbPath)) return null;
+  const dbPath2 = join4(homedir4(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
+  if (!existsSync3(dbPath2)) return null;
   try {
     const { DatabaseSync } = __require("node:sqlite");
-    const db = new DatabaseSync(dbPath, { readOnly: true });
+    const db = new DatabaseSync(dbPath2, { readOnly: true });
     try {
       const row = db.prepare("SELECT ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = ?").get(pk);
       const identifier = row?.ZIDENTIFIER;
@@ -40320,8 +40625,13 @@ var AppleNotesManager = class {
    * race that would exist if JavaScript checked the note and then issued a
    * separate unconditional `set body` command.
    */
-  updateNoteByIdIfUnchanged(id, currentTitle, expectedBody, newTitle, newContent, format = "plaintext") {
+  updateNoteByIdIfUnchanged(id, currentTitle, expectedBody, newTitle, newContent, format = "plaintext", expectedRichRevision) {
     const safeId = sanitizeNoteId(id);
+    if (expectedRichRevision) {
+      const rich = readRichNote(id);
+      if (rich.revision !== expectedRichRevision) return { status: "conflict" };
+      if (rich.hasNativeObjects || rich.hasChecklist) return { status: "attachments" };
+    }
     if (newTitle) validateLength(newTitle, MAX_TITLE_LENGTH, "Note title");
     validateLength(newContent, MAX_CONTENT_LENGTH, "Note content");
     validateLength(expectedBody, MAX_CONTENT_LENGTH, "Expected note content");
@@ -41887,8 +42197,9 @@ var AppleNotesManager = class {
   getNoteMarkdown(title, account) {
     const html = this.getNoteContent(title, account);
     if (!html) return "";
-    let markdown = this.htmlToMarkdown(html);
     const note = this.getNoteDetails(title, account);
+    const rich = note?.id ? enrichNoteRead(note.id, html) : void 0;
+    let markdown = this.htmlToMarkdown(rich?.content || html);
     if (note?.id) {
       const result = getChecklistItems(note.id);
       if (result.items) {
@@ -41913,7 +42224,8 @@ var AppleNotesManager = class {
   getNoteMarkdownById(id) {
     const html = this.getNoteContentById(id);
     if (!html) return "";
-    let markdown = this.htmlToMarkdown(html);
+    const rich = enrichNoteRead(id, html);
+    let markdown = this.htmlToMarkdown(rich.content);
     const result = getChecklistItems(id);
     if (result.items) {
       markdown = this.enrichMarkdownWithChecklists(markdown, result.items);
@@ -41923,7 +42235,7 @@ var AppleNotesManager = class {
 };
 
 // src/utils/syncDetection.ts
-import { execFileSync as execFileSync3 } from "child_process";
+import { execFileSync as execFileSync4 } from "child_process";
 import * as fs2 from "fs";
 import * as path2 from "path";
 import * as os2 from "os";
@@ -41968,7 +42280,7 @@ function getSyncStatus(useCache = true) {
         WHERE object.ZCLOUDSTATE = state.Z_PK
       );
     `;
-    const result = execFileSync3(
+    const result = execFileSync4(
       "sqlite3",
       ["-readonly", NOTES_DB_PATH2, query.replace(/\n/g, " ")],
       {
@@ -42027,7 +42339,7 @@ function withSyncAwarenessSync(operation, fn) {
 }
 
 // src/utils/noteMetadata.ts
-import { execFileSync as execFileSync4 } from "child_process";
+import { execFileSync as execFileSync5 } from "child_process";
 import * as fs3 from "fs";
 import * as path3 from "path";
 import * as os3 from "os";
@@ -42048,7 +42360,7 @@ var COLUMN_MAP = [
   { key: "smartFolderQuery", column: "ZSMARTFOLDERQUERYJSON", type: "text" }
 ];
 function runSqlite(query) {
-  return execFileSync4("sqlite3", ["-readonly", NOTES_DB_PATH3, query], {
+  return execFileSync5("sqlite3", ["-readonly", NOTES_DB_PATH3, query], {
     encoding: "utf8",
     timeout: 5e3,
     stdio: ["pipe", "pipe", "pipe"]
@@ -42319,12 +42631,12 @@ function formatDoctorReport(r) {
 
 // src/services/fileConfig.ts
 import { existsSync as existsSync6, readFileSync as readFileSync2 } from "fs";
-import { join as join6 } from "path";
-import { homedir as homedir6 } from "os";
+import { join as join7 } from "path";
+import { homedir as homedir7 } from "os";
 function fileConfigPath(env = process.env) {
   const override = env.APPLE_NOTES_MCP_CONFIG_FILE;
   if (override && override.trim()) return override.trim();
-  return join6(homedir6(), "Library", "Application Support", "apple-notes-mcp", "config.json");
+  return join7(homedir7(), "Library", "Application Support", "apple-notes-mcp", "config.json");
 }
 function loadFileConfig(env = process.env, path4 = fileConfigPath(env)) {
   const applied = [];
@@ -42532,10 +42844,6 @@ function withJsonSchema2020_12(transport2) {
 }
 
 // src/utils/noteRevision.ts
-import { createHash } from "node:crypto";
-function hashNoteContent(content) {
-  return `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}`;
-}
 var INLINE_TAG = /^<\/?(?:b|i|u|s|strike|em|strong|span|a|font|sub|sup|code|tt|small|big|mark)\b/i;
 function comparableVisibleText(html) {
   return html.replace(/<br\s*\/?\s*>/gi, " ").replace(/<[^>]*>/g, (tag) => INLINE_TAG.test(tag) ? "" : " ").replace(/&nbsp;|&#160;/gi, " ").replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&amp;/gi, "&").replace(/&#(\d+);/g, (_match, codePoint) => String.fromCodePoint(Number(codePoint))).replace(
@@ -42611,7 +42919,8 @@ function readExactNoteSnapshot(id) {
   }
   const body = notesManager.getNoteContentById(id);
   if (!body) return { error: `Failed to read content of note "${note.title}"` };
-  return { note, body, contentHash: hashNoteContent(body) };
+  const rich = enrichNoteRead(id, body);
+  return { note, body, rich, contentHash: richContentHash(body, rich) };
 }
 function revisionConflictMessage(title) {
   return `Note "${title}" changed after it was read. Read it again and review the newer version before retrying.`;
@@ -42641,7 +42950,7 @@ registerTool(
       ),
       format: external_exports.enum(["plaintext", "html"]).optional().default("plaintext").describe("Content format: 'plaintext' (default) or 'html' for rich formatting"),
       tags: external_exports.array(external_exports.string().max(MAX.TAG)).max(MAX.TAGS).optional().describe(
-        "Returned-only metadata \u2014 NOT written to Notes.app. Apple Notes tags can't be set via AppleScript, so any values passed here are echoed back in the response but do not appear on the created note. Use #hashtags inside the content body instead (Notes.app turns those into real tags)."
+        "Returned-only metadata \u2014 NOT written to Notes.app. Apple Notes tags can't be set via AppleScript, so any values passed here are echoed back in the response but do not appear on the created note. Use #hashtags in the body for searchable text; this does not create native tag objects. Native tags need the Notes Shortcuts action."
       ),
       folder: external_exports.string().max(MAX.FOLDER).optional().describe(
         "Folder to create the note in (supports nested paths like 'Work/Clients'). The folder must already exist \u2014 this tool does not create it; call create-folder first, which is idempotent and creates intermediate segments."
@@ -42675,7 +42984,7 @@ registerTool(
         `A note may have been created, but its exact ID could not be verified. Do not retry automatically. Returned ID: ${note.id}`
       );
     }
-    const contentHash = hashNoteContent(createdBody);
+    const contentHash = richContentHash(createdBody, enrichNoteRead(note.id, createdBody));
     const checklistWarning = detectChecklistAttempt(content) ?? "";
     return successResponse(`Note created: "${note.title}" [id: ${note.id}]${checklistWarning}`, {
       ok: true,
@@ -42764,7 +43073,7 @@ ${noteList}${truncationNote}${syncNote}`,
 registerTool(
   "get-note-content",
   {
-    description: "Use when: reading the full body text of one known note, by id (preferred) or title.\nReturns: the exact note id, content, contentHash revision token, parsed hashtags, and strippedImages/truncated when the body was capped.\nDo not use when: you only need metadata (get-note-details) or Markdown with checklist state (get-note-markdown).\nNote: password-protected notes must be unlocked in Notes.app first.\nSafety: inline images larger than APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES (default 256 KB) are replaced with '[inline image omitted: ...]' text placeholders, so the returned body is lossy whenever truncated is true. Mutations refuse attachment-bearing notes; edit those in Notes.app.",
+    description: "Use when: reading the full body text of one known note, by id (preferred) or title.\nReturns: the exact note id, content, contentHash revision token, parsed hashtags, nativeTags, restored links, richContentComplete/writable, and strippedImages/truncated when the body was capped. Read the warning when writable is false.\nDo not use when: you only need metadata (get-note-details) or Markdown with checklist state (get-note-markdown).\nNote: password-protected notes must be unlocked in Notes.app first.\nSafety: inline images larger than APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES (default 256 KB) are replaced with '[inline image omitted: ...]' text placeholders, so the returned body is lossy whenever truncated is true. Mutations refuse attachment-bearing notes; edit those in Notes.app.",
     inputSchema: {
       id: external_exports.string().max(MAX.ID).optional().describe("Note ID (preferred - more reliable than title)"),
       title: external_exports.string().max(MAX.TITLE).optional().describe("Note title (use id instead when available)"),
@@ -42778,6 +43087,13 @@ registerTool(
       content: external_exports.string().optional(),
       contentHash: external_exports.string().optional(),
       hashtags: external_exports.array(external_exports.string()).optional(),
+      nativeTags: external_exports.array(external_exports.string()).optional(),
+      links: external_exports.array(
+        external_exports.object({ start: external_exports.number(), length: external_exports.number(), text: external_exports.string(), url: external_exports.string() })
+      ).optional(),
+      richContentComplete: external_exports.boolean().optional(),
+      writable: external_exports.boolean().optional(),
+      warning: external_exports.string().optional(),
       /** Number of oversized inline images replaced with text placeholders. */
       strippedImages: external_exports.number().optional(),
       /** True when content is lossy — see strippedImages. Never write a truncated body back. */
@@ -42799,15 +43115,21 @@ registerTool(
       if (!rawContent2) {
         return errorResponse(`Failed to read content of note "${note2.title}"`);
       }
-      const stripped2 = stripLargeInlineImages(rawContent2);
+      const rich2 = enrichNoteRead(id, rawContent2);
+      const stripped2 = stripLargeInlineImages(rich2.content);
       const content2 = stripped2.html;
       const hashtags2 = parseHashtags(content2);
-      const warning2 = strippedImagesWarning(stripped2);
+      const warning2 = [strippedImagesWarning(stripped2), rich2.warning].filter(Boolean).join("\n\n");
       return successResponse(warning2 ? content2 + warning2 : content2, {
         id,
         title: note2.title,
         content: content2,
-        contentHash: hashNoteContent(rawContent2),
+        contentHash: richContentHash(rawContent2, rich2),
+        links: rich2.links,
+        nativeTags: rich2.nativeTags,
+        richContentComplete: rich2.complete,
+        writable: rich2.writable && stripped2.strippedCount === 0,
+        warning: rich2.warning,
         hashtags: hashtags2,
         strippedImages: stripped2.strippedCount,
         truncated: stripped2.strippedCount > 0
@@ -42829,15 +43151,21 @@ registerTool(
     if (!rawContent) {
       return errorResponse(`Failed to read content of note "${title}"`);
     }
-    const stripped = stripLargeInlineImages(rawContent);
+    const rich = enrichNoteRead(note.id, rawContent);
+    const stripped = stripLargeInlineImages(rich.content);
     const content = stripped.html;
     const hashtags = parseHashtags(content);
-    const warning = strippedImagesWarning(stripped);
+    const warning = [strippedImagesWarning(stripped), rich.warning].filter(Boolean).join("\n\n");
     return successResponse(warning ? content + warning : content, {
       id: note.id,
       title,
       content,
-      contentHash: hashNoteContent(rawContent),
+      contentHash: richContentHash(rawContent, rich),
+      links: rich.links,
+      nativeTags: rich.nativeTags,
+      richContentComplete: rich.complete,
+      writable: rich.writable && stripped.strippedCount === 0,
+      warning: rich.warning,
       hashtags,
       strippedImages: stripped.strippedCount,
       truncated: stripped.strippedCount > 0
@@ -43081,10 +43409,13 @@ registerTool(
 registerTool(
   "update-note",
   {
-    description: "Use when: replacing the body of one exact Apple Note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or the note has attachments.\nSafety: requires the exact note id and expectedContentHash from get-note-content. The server atomically rejects stale content and attachment-bearing notes, then reads the same id back after saving. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
+    description: "Use when: replacing the body of one exact Apple Note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or the note has attachments.\nSafety: requires the exact note id and expectedContentHash from get-note-content. The server checks rich metadata revision, atomically checks the AppleScript body, blocks native objects/checklists, and verifies actual link destinations after saving. Preserve returned HTML links unless allowLinkChanges is explicitly requested. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
     inputSchema: {
       id: noteIdInput,
       expectedContentHash: expectedContentHashInput,
+      allowLinkChanges: external_exports.boolean().optional().default(false).describe(
+        "Set true only when the user explicitly intends to remove, relabel or change existing links. Defaults to preserving all links."
+      ),
       newTitle: external_exports.string().max(MAX.TITLE).optional().describe(
         "New title for plaintext updates. Ignored when format is 'html'; include the visible title as the first line of newContent instead."
       ),
@@ -43103,72 +43434,90 @@ registerTool(
       verifiedVisibleText: external_exports.boolean().optional()
     }
   },
-  withErrorHandling(({ id, expectedContentHash, newTitle, newContent, format = "plaintext" }) => {
-    const snapshot = readExactNoteSnapshot(id);
-    if ("error" in snapshot) return errorResponse(snapshot.error);
-    if (snapshot.contentHash !== expectedContentHash) {
-      return errorResponse(revisionConflictMessage(snapshot.note.title));
-    }
-    const attachments = notesManager.listAttachmentsById(id);
-    if (attachments.length > 0) {
-      return errorResponse(
-        `Note "${snapshot.note.title}" has ${attachments.length} attachment(s). Full-body replacement is blocked; edit it in Notes.app.`
-      );
-    }
-    const result = notesManager.updateNoteByIdIfUnchanged(
+  withErrorHandling(
+    ({
       id,
-      snapshot.note.title,
-      snapshot.body,
+      expectedContentHash,
       newTitle,
       newContent,
-      format
-    );
-    if (result.status === "conflict") {
-      return errorResponse(revisionConflictMessage(snapshot.note.title));
-    }
-    if (result.status === "attachments") {
-      return errorResponse(
-        `Note "${snapshot.note.title}" gained an attachment before saving. No content was replaced.`
-      );
-    }
-    if (result.status !== "updated") {
-      return errorResponse(
-        `The update result for note "${snapshot.note.title}" is uncertain. Read the exact ID before retrying.`
-      );
-    }
-    const readback = notesManager.getNoteContentById(id);
-    const contentHash = readback ? hashNoteContent(readback) : "";
-    if (!readback || comparableVisibleText(readback) !== comparableVisibleText(result.writtenBody)) {
-      return errorResponse(
-        `The note accepted an update, but exact-ID readback visible text did not match. Do not retry automatically; inspect note ID ${id} in Notes.app.`
-      );
-    }
-    const displayTitle = resolveUpdateResponseTitle(
-      snapshot.note.title,
-      newTitle,
-      format,
-      newContent
-    );
-    const sharedWarning = snapshot.note.shared ? "\n\n\u26A0\uFE0F This note is shared with collaborators. Your changes are visible to them." : "";
-    const checklistWarning = detectChecklistAttempt(newContent) ?? "";
-    return successResponse(
-      `Note updated; visible text verified: "${displayTitle}" [id: ${id}]${sharedWarning}${checklistWarning}`,
-      {
-        ok: true,
-        id,
-        title: displayTitle,
-        shared: snapshot.note.shared ?? false,
-        previousContentHash: expectedContentHash,
-        contentHash,
-        verifiedVisibleText: true
+      format = "plaintext",
+      allowLinkChanges = false
+    }) => {
+      const snapshot = readExactNoteSnapshot(id);
+      if ("error" in snapshot) return errorResponse(snapshot.error);
+      if (snapshot.contentHash !== expectedContentHash) {
+        return errorResponse(revisionConflictMessage(snapshot.note.title));
       }
-    );
-  }, "Error updating note")
+      assertLinkedWrite(snapshot.rich, newContent, format, allowLinkChanges);
+      const attachments = notesManager.listAttachmentsById(id);
+      if (attachments.length > 0) {
+        return errorResponse(
+          `Note "${snapshot.note.title}" has ${attachments.length} attachment(s). Full-body replacement is blocked; edit it in Notes.app.`
+        );
+      }
+      const result = notesManager.updateNoteByIdIfUnchanged(
+        id,
+        snapshot.note.title,
+        snapshot.body,
+        newTitle,
+        newContent,
+        format,
+        snapshot.rich.revision
+      );
+      if (result.status === "conflict") {
+        return errorResponse(revisionConflictMessage(snapshot.note.title));
+      }
+      if (result.status === "attachments") {
+        return errorResponse(
+          `Note "${snapshot.note.title}" gained an attachment before saving. No content was replaced.`
+        );
+      }
+      if (result.status !== "updated") {
+        return errorResponse(
+          `The update result for note "${snapshot.note.title}" is uncertain. Read the exact ID before retrying.`
+        );
+      }
+      const readback = notesManager.getNoteContentById(id);
+      const richReadback = enrichNoteRead(id, readback || "");
+      const contentHash = readback ? richContentHash(readback, richReadback) : "";
+      if (!richReadback.complete || linkSignature(richReadback.links) !== linkSignature(htmlLinks(result.writtenBody))) {
+        return errorResponse(
+          "The note accepted the write, but rich-link readback is not verified. Read the exact ID before retrying; do not repeat the write automatically."
+        );
+      }
+      if (!readback || comparableVisibleText(readback) !== comparableVisibleText(result.writtenBody)) {
+        return errorResponse(
+          `The note accepted an update, but exact-ID readback visible text did not match. Do not retry automatically; inspect note ID ${id} in Notes.app.`
+        );
+      }
+      const displayTitle = resolveUpdateResponseTitle(
+        snapshot.note.title,
+        newTitle,
+        format,
+        newContent
+      );
+      const sharedWarning = snapshot.note.shared ? "\n\n\u26A0\uFE0F This note is shared with collaborators. Your changes are visible to them." : "";
+      const checklistWarning = detectChecklistAttempt(newContent) ?? "";
+      return successResponse(
+        `Note updated; visible text verified: "${displayTitle}" [id: ${id}]${sharedWarning}${checklistWarning}`,
+        {
+          ok: true,
+          id,
+          title: displayTitle,
+          shared: snapshot.note.shared ?? false,
+          previousContentHash: expectedContentHash,
+          contentHash,
+          verifiedVisibleText: true
+        }
+      );
+    },
+    "Error updating note"
+  )
 );
 registerTool(
   "append-to-note",
   {
-    description: "Use when: adding content to one exact note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or it has attachments.\nSafety: append still rewrites the full HTML body, so it uses the same exact-ID, revision, attachment, and readback guards as update-note. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
+    description: "Use when: adding content to one exact note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or it has attachments or native objects.\nSafety: append rewrites the HTML body, so it uses exact-ID, rich revision, native-object, attachment, link, and readback guards. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
     inputSchema: {
       id: noteIdInput,
       expectedContentHash: expectedContentHashInput,
@@ -43216,15 +43565,21 @@ registerTool(
       if (snapshot.contentHash !== expectedContentHash) {
         return errorResponse(revisionConflictMessage(snapshot.note.title));
       }
+      if (!snapshot.rich.writable) {
+        return errorResponse(
+          snapshot.rich.warning || `Note "${snapshot.note.title}" contains native objects that cannot be preserved by a full-body append.`
+        );
+      }
       const attachments = notesManager.listAttachmentsById(id);
       if (attachments.length > 0) {
         return errorResponse(
           `Note "${snapshot.note.title}" has ${attachments.length} attachment(s). Append is blocked because it rewrites the full body; edit it in Notes.app.`
         );
       }
-      const firstDivEnd = snapshot.body.indexOf("</div>");
-      const titleDiv = firstDivEnd !== -1 ? snapshot.body.slice(0, firstDivEnd + 6) : "";
-      const bodyHtml = firstDivEnd !== -1 ? snapshot.body.slice(firstDivEnd + 6) : snapshot.body;
+      assertLinkedWrite(snapshot.rich, snapshot.rich.content, "html");
+      const firstDivEnd = snapshot.rich.content.indexOf("</div>");
+      const titleDiv = firstDivEnd !== -1 ? snapshot.rich.content.slice(0, firstDivEnd + 6) : "";
+      const bodyHtml = firstDivEnd !== -1 ? snapshot.rich.content.slice(firstDivEnd + 6) : snapshot.rich.content;
       const newBlock = contentToHtml(content);
       const sepHtml = separatorToHtml(separator);
       const combinedBody = position === "before" ? titleDiv + newBlock + sepHtml + bodyHtml : titleDiv + bodyHtml + sepHtml + newBlock;
@@ -43234,7 +43589,8 @@ registerTool(
         snapshot.body,
         void 0,
         combinedBody,
-        "html"
+        "html",
+        snapshot.rich.revision
       );
       if (result.status === "conflict") {
         return errorResponse(revisionConflictMessage(snapshot.note.title));
@@ -43250,7 +43606,13 @@ registerTool(
         );
       }
       const readback = notesManager.getNoteContentById(id);
-      const contentHash = readback ? hashNoteContent(readback) : "";
+      const richReadback = enrichNoteRead(id, readback || "");
+      const contentHash = readback ? richContentHash(readback, richReadback) : "";
+      if (!richReadback.complete || linkSignature(richReadback.links) !== linkSignature(htmlLinks(result.writtenBody))) {
+        return errorResponse(
+          "The note accepted the write, but rich-link readback is not verified. Read the exact ID before retrying; do not repeat the write automatically."
+        );
+      }
       if (!readback || comparableVisibleText(readback) !== comparableVisibleText(result.writtenBody)) {
         return errorResponse(
           `The note accepted an append, but exact-ID readback visible text did not match. Do not retry automatically; inspect note ID ${id} in Notes.app.`
