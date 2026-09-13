@@ -921,7 +921,7 @@ Lists all notes shared with collaborators.
 
 ---
 
-### Local background operations (2.8.2-local.5)
+### Native background operations (2.9.0)
 
 Use `get-capabilities` before native writes. Registered tools may be disabled:
 installation and successful live validation are separate requirements. These

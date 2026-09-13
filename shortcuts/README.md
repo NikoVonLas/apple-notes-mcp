@@ -46,7 +46,7 @@ Installed and tested on 2026-09-13. The exact installed UUID is
 `68529563-79FA-4075-A96D-8C84FB1744E8`. The previous versions remain installed;
 select the UUID, not a duplicate display name.
 
-Local.5 enables `append-native`, `create-checklist-item`, `create-table`,
+Version 2.9.0 enables `append-native`, `create-checklist-item`, `create-table`,
 `set-note-pinned` and `insert-note-link`. It retains v4's verified native tag
 removal. `replace-native-tag` still uses the separate Native Tags bridge for
 addition, verifies the new tag, then removes the old one through v5.

@@ -1,6 +1,6 @@
-# Local build: 2.8.2-local.5
+# Version: 2.9.0
 
-Local.5 was live-validated on 2026-09-13 with the installed Background
+Version 2.9.0 was live-validated on 2026-09-13 with the installed Background
 Operations v5 bridge. It keeps local.4's folder, attachment, tag and native
 inspection tools and enables native append, checklist creation, table creation,
 pinning and static Notes-link insertion.
@@ -108,7 +108,7 @@ corepack pnpm test
 corepack pnpm run build
 ```
 
-Codex is configured to use the separately installed `2.8.2-local.5` bundle
+Codex is configured to use the separately installed `2.9.0` bundle
 with Background Operations v5 and the verified native-tag Shortcut UUID after
 its next host restart. Previous local builds are retained.
 The original `2.8.2` bundle remains installed, allowing rollback by changing the
