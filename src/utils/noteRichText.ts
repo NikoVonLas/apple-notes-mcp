@@ -94,6 +94,7 @@ function styleValue(field: ReturnType<typeof decodeMessage>[number]): unknown {
   return Buffer.from(field.value).toString("hex");
 }
 
+/** Decode the rich-text metadata stored for one Apple Notes record. */
 export function parseRichNote(data: Uint8Array, nativeTags: string[] = []): RichNote {
   const doc = decodeMessage(data);
   const wrapper = embeddedMessage(getField(doc, 2));
@@ -179,6 +180,7 @@ export function parseRichNote(data: Uint8Array, nativeTags: string[] = []): Rich
   };
 }
 
+/** Read rich metadata for one canonical CoreData note ID without modifying Notes. */
 export function readRichNote(id: string): RichNote {
   const pk = /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p([0-9]+)$/i.exec(id)?.[1];
   if (!pk) throw new Error("Invalid exact note ID");
@@ -329,6 +331,7 @@ export function restoreNoteLinks(html: string, rich: RichNote): string {
   return result;
 }
 
+/** Combine AppleScript HTML with database metadata and restore verifiable links. */
 export function enrichNoteRead(id: string, rawBody: string): RichRead {
   let metadata: RichNote | undefined;
   try {
@@ -369,6 +372,7 @@ export function richContentHash(rawBody: string, rich: RichRead): string {
   return `sha256:${createHash("sha256").update(rawBody).update("\0").update(rich.revision).digest("hex")}`;
 }
 
+/** Extract visible link labels and safe destinations from an HTML fragment. */
 export function htmlLinks(html: string): Array<{ text: string; url: string }> {
   const links: Array<{ text: string; url: string }> = [];
   for (const match of html.matchAll(
@@ -385,6 +389,7 @@ export function htmlLinks(html: string): Array<{ text: string; url: string }> {
   }
   return links;
 }
+/** Produce a stable signature that preserves duplicate labels and destinations. */
 export function linkSignature(links: Array<{ text: string; url: string }>): string {
   return JSON.stringify(
     links.flatMap((link) =>
@@ -395,6 +400,7 @@ export function linkSignature(links: Array<{ text: string; url: string }>): stri
   );
 }
 
+/** Reject a write that unexpectedly loses or changes existing links. */
 export function assertLinkedWrite(
   rich: RichRead,
   content: string,

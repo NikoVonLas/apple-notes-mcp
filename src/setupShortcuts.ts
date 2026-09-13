@@ -79,6 +79,7 @@ export function setupShortcuts(
   return { ready: items.every((item) => item.installed), checkOnly, items };
 }
 
+/** Render a concise terminal summary for Shortcut setup or check-only mode. */
 export function formatShortcutSetup(report: ShortcutSetupReport): string {
   const lines = ["Apple Notes MCP Shortcut setup", ""];
   for (const item of report.items) {

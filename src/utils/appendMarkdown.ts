@@ -1,6 +1,7 @@
 /** Deliberately bounded Markdown subset for Notes append. Reject richer syntax before writing. */
 const escape = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+/** Convert the supported bounded Markdown subset to semantic Apple Notes HTML. */
 export function appendMarkdownHtml(markdown: string): string {
   if (markdown.includes("\uE000") || markdown.includes("\uE001"))
     throw new Error("Unsupported reserved characters");

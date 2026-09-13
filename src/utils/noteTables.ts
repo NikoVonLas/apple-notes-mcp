@@ -33,6 +33,7 @@ const hex = (f: ProtoField | undefined) => {
   if (!(f?.value instanceof Uint8Array)) throw new Error("Missing table UUID");
   return Buffer.from(f.value).toString("hex");
 };
+/** Decode a complete native Notes table, including stable row and column IDs. */
 export function parseNoteTable(compressed: Uint8Array): {
   rows: string[][];
   rowIds: string[];

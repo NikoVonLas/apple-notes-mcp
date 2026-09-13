@@ -18,8 +18,10 @@ import { appendMarkdownHtml } from "../utils/appendMarkdown.js";
 import { comparableVisibleText } from "../utils/noteRevision.js";
 
 export const BACKGROUND_SHORTCUT = "Apple Notes MCP - Background Operations v5";
+/** Report whether the configured background-operations bridge is installed uniquely. */
 export const backgroundStatus = () =>
   nativeTagsStatus(process.env.APPLE_NOTES_MCP_BACKGROUND_SHORTCUT || BACKGROUND_SHORTCUT);
+/** Report whether the dedicated native-tag bridge is installed uniquely. */
 export const nativeTagBridgeStatus = () => nativeTagsStatus();
 export type BackgroundOperation =
   | "append-text"
@@ -43,6 +45,7 @@ export interface BackgroundSnapshot {
   pinned?: boolean;
   checklist: Array<{ text: string; done: boolean }>;
 }
+/** Read the exact note state used to guard and verify a native background mutation. */
 export function readBackgroundSnapshot(manager: AppleNotesManager, id: string): BackgroundSnapshot {
   if (!/^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i.test(id))
     throw new Error("Exact note ID required");
@@ -119,6 +122,7 @@ export function validateAppendContent(content: string, format: "plaintext" | "ht
     throw new Error("Markdown images, raw HTML and local/executable links are unsupported");
 }
 
+/** Invoke the installed background bridge with a private temporary JSON request. */
 export function runBackgroundShortcut(input: Record<string, string>) {
   const status = backgroundStatus();
   if (!status.installed)
@@ -161,6 +165,7 @@ export interface BackgroundDependencies {
   candidates: (title: string, scope: string) => string[];
   run: (input: Record<string, string>) => void;
 }
+/** Bind production note reads, candidate selection, and Shortcut execution. */
 export function backgroundDependencies(manager: AppleNotesManager): BackgroundDependencies {
   return {
     read: (id) => readBackgroundSnapshot(manager, id),
@@ -180,6 +185,7 @@ export function backgroundDependencies(manager: AppleNotesManager): BackgroundDe
   };
 }
 
+/** Verify that a native mutation retained all unrelated rich note content. */
 export function assertPreserved(
   before: BackgroundSnapshot,
   after: BackgroundSnapshot,
@@ -258,6 +264,7 @@ export function assertPreserved(
   }
 }
 
+/** Run one guarded native mutation and verify its outcome by exact-ID readback. */
 export function mutateBackground(
   request: BackgroundInput,
   operation: BackgroundOperation,
@@ -317,6 +324,7 @@ export function mutateBackground(
   };
 }
 
+/** Verify every link requested in appended HTML appears after existing links. */
 export function assertAppendedHtmlLinks(
   previousCount: number,
   links: Array<{ text: string; url: string }>,
@@ -334,6 +342,7 @@ export function assertAppendedHtmlLinks(
   }
 }
 
+/** Verify that an append retained the old body and added the expected visible text. */
 export function assertAppendedVisibleText(beforeHtml: string, afterHtml: string, expected: string) {
   const before = comparableVisibleText(beforeHtml);
   const after = comparableVisibleText(afterHtml);
@@ -343,6 +352,7 @@ export function assertAppendedVisibleText(beforeHtml: string, afterHtml: string,
   if (!suffix || !suffix.includes(wanted)) throw new Error("Appended text not verified");
 }
 
+/** Append plaintext, bounded Markdown, or semantic HTML through the native bridge. */
 export function appendNative(
   manager: AppleNotesManager,
   request: BackgroundInput & { content: string; format: "plaintext" | "html" | "markdown" }
@@ -384,6 +394,7 @@ export function appendNative(
   );
 }
 
+/** Add or remove one native tag while preserving unrelated note objects. */
 export function setNativeTag(
   manager: AppleNotesManager,
   request: BackgroundInput & { tag: string; present: boolean }
@@ -420,6 +431,7 @@ export function setNativeTag(
   );
 }
 
+/** Read a bounded regular local file for verified attachment insertion. */
 export function localAttachment(path: string) {
   if (!isAbsolute(path)) throw new Error("An absolute local file path is required");
   const stat = statSync(path);

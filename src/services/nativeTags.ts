@@ -6,6 +6,7 @@ import { linkSignature, type RichNote } from "../utils/noteRichText.js";
 
 export const NATIVE_TAGS_SHORTCUT = "Apple Notes MCP - Native Tags";
 
+/** Normalize, validate, and deduplicate native tag names supplied by a client. */
 export function normalizeNativeTags(tags: string[]): string[] {
   if (!tags.length || tags.length > 100) throw new Error("Provide between 1 and 100 tags");
   return [
@@ -110,6 +111,7 @@ export function addNativeTags(request: NativeTagRequest, deps: NativeTagDependen
   };
 }
 
+/** Resolve exactly one installed Native Tags Shortcut by name or UUID. */
 export function nativeTagsStatus(
   shortcut = process.env.APPLE_NOTES_MCP_TAGS_SHORTCUT || NATIVE_TAGS_SHORTCUT
 ) {
@@ -132,6 +134,7 @@ export function nativeTagsStatus(
   };
 }
 
+/** Invoke the installed Native Tags bridge with a private temporary request. */
 export function runNativeTagsShortcut(input: { title: string; scopeText: string; tags: string[] }) {
   const status = nativeTagsStatus();
   if (!status.installed)

@@ -71,6 +71,7 @@ const common = { id, expectedContentHash: revision, scopeText: z.string().min(12
 const htmlEscape = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+/** Register verified native background operations and capability reporting. */
 export function registerBackgroundOperations(server: McpServer, manager: AppleNotesManager) {
   function tool<S extends z.ZodRawShape>(
     name: string,

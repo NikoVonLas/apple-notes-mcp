@@ -1776,6 +1776,7 @@ export class AppleNotesManager {
     return { id, name: newName, parentId: expectedParentId };
   }
 
+  /** Read the exact name and parent identity used by guarded folder rename. */
   getFolderById(id: string) {
     if (!/^x-coredata:\/\/[0-9a-f-]+\/ICFolder\/p\d+$/i.test(id))
       throw new Error("An exact folder ID is required");
@@ -1789,6 +1790,7 @@ export class AppleNotesManager {
     return { id, name, parentId };
   }
 
+  /** Insert one file into an unchanged exact note and return Notes' attachment ID. */
   addAttachmentById(id: string, expectedBody: string, filePath: string) {
     if (!/^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i.test(id))
       throw new Error("Exact note ID required");
@@ -1809,6 +1811,7 @@ export class AppleNotesManager {
     return result.output.trim();
   }
 
+  /** Delete one exact attachment after confirming that its containing note is unchanged. */
   deleteAttachmentById(id: string, expectedBody: string, attachmentId: string) {
     if (!/^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i.test(id))
       throw new Error("Exact note ID required");
