@@ -67,7 +67,17 @@ function requireValidated(name: string) {
 }
 const id = z.string().regex(/^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i);
 const revision = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const common = { id, expectedContentHash: revision, scopeText: z.string().min(12).max(500) };
+const common = {
+  id,
+  expectedContentHash: revision,
+  scopeText: z
+    .string()
+    .min(12)
+    .max(500)
+    .describe(
+      "Distinctive existing phrase used by Notes search. Prefer plain words without punctuation, hashtags, or paths."
+    ),
+};
 const htmlEscape = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -202,7 +212,7 @@ export function registerBackgroundOperations(server: McpServer, manager: AppleNo
   );
   tool(
     "append-native",
-    "Append formatted content without replacing existing text or native objects. Requires a unique existing scope phrase, exact ID and fresh content hash. Supports semantic HTML, plaintext and Markdown; no embedded media or external fetching.",
+    "Append formatted content without replacing existing text or native objects. Requires a unique existing scope phrase of plain words, exact ID and fresh content hash. Avoid punctuation, hashtags, and paths because Notes search may not resolve them literally. Supports semantic HTML, plaintext and Markdown; no embedded media or external fetching.",
     {
       ...common,
       content: z

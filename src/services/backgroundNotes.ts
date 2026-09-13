@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, statSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, isAbsolute } from "node:path";
 import { AppleNotesManager } from "./appleNotesManager.js";
@@ -434,8 +443,16 @@ export function setNativeTag(
 /** Read a bounded regular local file for verified attachment insertion. */
 export function localAttachment(path: string) {
   if (!isAbsolute(path)) throw new Error("An absolute local file path is required");
-  const stat = statSync(path);
-  if (!stat.isFile() || stat.size === 0 || stat.size > 64 * 1024 * 1024)
-    throw new Error("Attachment must be a regular file of at most 64 MiB");
-  return readFileSync(path);
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.size === 0 || stat.size > 64 * 1024 * 1024)
+      throw new Error("Attachment must be a nonempty regular file of at most 64 MiB");
+    const bytes = readFileSync(descriptor);
+    if (bytes.length !== stat.size)
+      throw new Error("Attachment changed while it was being read; try again");
+    return bytes;
+  } finally {
+    closeSync(descriptor);
+  }
 }

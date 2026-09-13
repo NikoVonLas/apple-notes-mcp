@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { BACKGROUND_SHORTCUT, runBackgroundShortcut } from "./backgroundNotes.js";
 
 vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
@@ -20,8 +20,17 @@ describe("background transport", () => {
       runs++;
       expect(args?.slice(0, 3)).toEqual(["run", shortcutId, "--input-path"]);
       path = String(args?.[3]);
-      expect(statSync(path).mode & 0o777).toBe(0o600);
-      expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ text, tag: "", change: "" });
+      const descriptor = openSync(path, "r");
+      try {
+        expect(fstatSync(descriptor).mode & 0o777).toBe(0o600);
+        expect(JSON.parse(readFileSync(descriptor, "utf8"))).toMatchObject({
+          text,
+          tag: "",
+          change: "",
+        });
+      } finally {
+        closeSync(descriptor);
+      }
       if (timeout) throw new Error("ETIMEDOUT");
       return "";
     });

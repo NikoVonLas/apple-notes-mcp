@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AppleNotesManager } from "./appleNotesManager.js";
@@ -269,12 +269,17 @@ describe("local attachments", () => {
       const file = join(directory, "file.txt");
       writeFileSync(file, "content");
       expect(localAttachment(file).toString()).toBe("content");
+
+      const symlink = join(directory, "symlink.txt");
+      symlinkSync(file, symlink);
+      expect(() => localAttachment(symlink)).toThrow();
+
       expect(() => localAttachment("relative.txt")).toThrow(/absolute/);
       expect(() => localAttachment(directory)).toThrow(/regular file/);
 
       const empty = join(directory, "empty.txt");
       writeFileSync(empty, "");
-      expect(() => localAttachment(empty)).toThrow(/regular file/);
+      expect(() => localAttachment(empty)).toThrow(/nonempty regular file/);
 
       const large = join(directory, "large.bin");
       writeFileSync(large, "x");

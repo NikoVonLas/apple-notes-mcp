@@ -974,7 +974,9 @@ Preserves folder identity and contents; refuses stale metadata and sibling confl
 
 Requires note `id`, fresh `expectedContentHash`, unique existing `scopeText`,
 `content`, and optional `format` (`plaintext`, semantic `html`, or bounded
-`markdown`). Appends with a visible blank line, preserving existing rich objects.
+`markdown`). Use a scope phrase of plain words without punctuation, hashtags, or
+paths because Notes search may not resolve them literally. Appends with a visible
+blank line, preserving existing rich objects.
 Markdown supports headings, flat lists, emphasis and links; unsupported syntax is
 rejected. Tables use `create-table`. Live-verified with Background Operations v5.
 
