@@ -117,7 +117,7 @@ export function parseNoteTable(compressed: Uint8Array): {
     );
   });
   if (rtl) {
-    values.forEach((row) => row.reverse());
+    for (const row of values) row.reverse();
     columns.ids.reverse();
   }
   return { rows: values, rowIds: rows.ids, columnIds: columns.ids };

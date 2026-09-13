@@ -334,11 +334,7 @@ export function assertAppendedHtmlLinks(
   }
 }
 
-export function assertAppendedVisibleText(
-  beforeHtml: string,
-  afterHtml: string,
-  expected: string
-) {
+export function assertAppendedVisibleText(beforeHtml: string, afterHtml: string, expected: string) {
   const before = comparableVisibleText(beforeHtml);
   const after = comparableVisibleText(afterHtml);
   if (!after.startsWith(before)) throw new Error("Appended text not verified");

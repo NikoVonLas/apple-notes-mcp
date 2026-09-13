@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);
+import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -43508,7 +43508,7 @@ function parseNoteTable(compressed) {
     );
   });
   if (rtl) {
-    values.forEach((row) => row.reverse());
+    for (const row of values) row.reverse();
     columns.ids.reverse();
   }
   return { rows: values, rowIds: rows.ids, columnIds: columns.ids };

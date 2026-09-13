@@ -24,6 +24,38 @@ describe("folder rename", () => {
     expect(script).not.toMatch(/\b(make new|delete|move)\b/);
     expect(exec.mock.calls[0][1]).toMatchObject({ maxRetries: 1 });
   });
+  it("reads one folder by exact ID and validates complete metadata", () => {
+    exec.mockReturnValue({ success: true, output: `R&D\u001f${parent}\n` });
+    expect(manager.getFolderById(id)).toEqual({ id, name: "R&D", parentId: parent });
+    expect(exec.mock.calls[0][0]).toContain(`folder id "${id}"`);
+
+    exec.mockReturnValue({ success: true, output: "incomplete" });
+    expect(() => manager.getFolderById(id)).toThrow(/Incomplete/);
+    expect(() => manager.getFolderById(id.replace("ICFolder", "ICNote"))).toThrow(/folder ID/);
+  });
+  it("adds and deletes an attachment once using exact note and attachment IDs", () => {
+    const noteId = id.replace("ICFolder", "ICNote");
+    const attachmentId = "x-coredata://ABC/ICAttachment/p9";
+    exec.mockReturnValueOnce({ success: true, output: `${attachmentId}\n` });
+    expect(manager.addAttachmentById(noteId, "Existing body", "/tmp/example.txt")).toBe(
+      attachmentId
+    );
+    expect(exec.mock.calls[0][0]).toContain("make new attachment");
+    expect(exec.mock.calls[0][1]).toMatchObject({ maxRetries: 1 });
+
+    exec.mockReturnValueOnce({ success: true, output: "deleted\n" });
+    expect(manager.deleteAttachmentById(noteId, "Existing body", attachmentId)).toBeUndefined();
+    expect(exec.mock.calls[1][0]).toContain("Attachment does not belong to this note");
+    expect(exec.mock.calls[1][1]).toMatchObject({ maxRetries: 1 });
+  });
+  it("rejects invalid note IDs and uncertain attachment mutations", () => {
+    expect(() => manager.addAttachmentById(id, "body", "/tmp/example.txt")).toThrow(/note ID/);
+    expect(() => manager.deleteAttachmentById(id, "body", "attachment")).toThrow(/note ID/);
+    exec.mockReturnValue({ success: false, output: "", error: "Notes rejected mutation" });
+    const noteId = id.replace("ICFolder", "ICNote");
+    expect(() => manager.addAttachmentById(noteId, "body", "/tmp/example.txt")).toThrow(/rejected/);
+    expect(() => manager.deleteAttachmentById(noteId, "body", "attachment")).toThrow(/rejected/);
+  });
   it("propagates conflicts without repeating mutations", () => {
     exec.mockReturnValue({ success: false, output: "", error: "Folder changed" });
     expect(() => manager.renameFolderById(id, "Before", parent, "After")).toThrow(/changed/);

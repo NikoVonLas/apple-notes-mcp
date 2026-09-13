@@ -99,6 +99,39 @@ describe("Notes rich text", () => {
       expect.arrayContaining(["-readonly", expect.stringContaining("ZNOTE=12")])
     );
   });
+  it("retains and sorts metadata for referenced native objects", () => {
+    const first = Buffer.concat([run(1), b(12, b(1, "object-b"))]);
+    const second = Buffer.concat([run(1), b(12, b(1, "object-a"))]);
+    const blob = gzipSync(document("\ufffc\ufffc", [first, second])).toString("hex");
+    vi.mocked(execFileSync).mockReturnValue(
+      blob +
+        "\n{}\n" +
+        JSON.stringify([
+          { id: "object-b", pk: 2, type: "table", mergeable: "BB", view: 1 },
+          { id: "object-a", pk: 1, type: "attachment", mergeable: "AA", view: 0 },
+          { id: "stale", pk: 3, type: "tag", mergeable: "CC", view: 0 },
+        ]) +
+        "\n"
+    );
+    expect(readRichNote("x-coredata://ABCDEF/ICNote/p12").objectData).toEqual([
+      { id: "object-a", pk: 1, type: "attachment", mergeable: "AA", view: 0 },
+      { id: "object-b", pk: 2, type: "table", mergeable: "BB", view: 1 },
+    ]);
+  });
+  it("deduplicates native checklist runs by their stable item ID", () => {
+    const item = (id: number, done: number) =>
+      Buffer.concat([
+        run(2),
+        b(
+          2,
+          Buffer.concat([n(1, 103), b(5, Buffer.concat([b(1, Buffer.alloc(16, id)), n(2, done)]))])
+        ),
+      ]);
+    const parsed = parseRichNote(document("A\nB\n", [item(1, 0), item(1, 0)]));
+    expect(parsed.checklistItems).toEqual([
+      { id: Buffer.alloc(16, 1).toString("hex"), start: 0, text: "A", done: false },
+    ]);
+  });
   it("blocks writes when the rich store is unavailable and rejects noncanonical IDs", () => {
     vi.mocked(execFileSync).mockImplementation(() => {
       throw new Error("access denied");
