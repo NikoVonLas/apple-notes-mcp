@@ -1,5 +1,10 @@
 # Notes background bridges
 
+For packaged installations, run `apple-notes-mcp setup`. It checks both bridge
+UUIDs and opens only missing signed workflows. Confirm **Add Shortcut** in each
+macOS window, then run `apple-notes-mcp setup --check` or the MCP `doctor` tool.
+Connecting an MCP client alone never opens setup UI.
+
 ## Append diagnosis — completed 2026-09-13
 
 The v4 retry reached `WFAppendToNoteAction` and asked for `text`; the user

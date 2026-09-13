@@ -48,6 +48,7 @@ import { comparableVisibleText } from "@/utils/noteRevision.js";
 import { addNativeTags, nativeTagsStatus, runNativeTagsShortcut } from "@/services/nativeTags.js";
 import { registerBackgroundOperations, VERIFIED_BACKGROUND } from "@/tools/backgroundOperations.js";
 import { appendNative } from "@/services/backgroundNotes.js";
+import { formatShortcutSetup, setupShortcuts } from "@/setupShortcuts.js";
 import {
   enrichNoteRead,
   richContentHash,
@@ -65,6 +66,12 @@ loadFileConfig();
 // Read version from package.json to keep it in sync
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
+
+if (process.argv[2] === "setup") {
+  const report = setupShortcuts(process.argv.slice(3).includes("--check"));
+  process.stdout.write(formatShortcutSetup(report) + "\n");
+  process.exit(report.ready || !report.checkOnly ? 0 : 1);
+}
 
 // =============================================================================
 // Server Initialization
@@ -944,8 +951,8 @@ registerTool(
     return successResponse(
       status.installed
         ? "Native tagging Shortcut is installed"
-        : "Import the supplied Native Tags shortcut first",
-      status
+        : "Run apple-notes-mcp setup and approve Add Shortcut in macOS",
+      status.installed ? status : { ...status, setupCommand: "apple-notes-mcp setup" }
     );
   }, "Error checking native tags")
 );

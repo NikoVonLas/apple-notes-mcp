@@ -17,11 +17,16 @@ objects and links. A project-note write also confirmed the native-tag edge case:
 appended visible text is verified from Notes HTML while rich objects and links
 remain independently checked. Temporary diagnostic notes are removed after validation.
 
-The merged suite passes all 689 tests. Bridge-generator tests, TypeScript,
+The merged suite passes all 693 tests. Bridge-generator tests, TypeScript,
 ESLint and the production bundle build also pass. File insertion deduplicates
 repeated references to the same native attachment ID before verifying bytes.
 Native table/attachment deletion failed in both supported routes on this macOS
 and stays unavailable. See `get-capabilities` and `shortcuts/README.md`.
+
+The package now ships both signed bridge workflows and provides
+`apple-notes-mcp setup` plus read-only `setup --check`. Setup opens only missing
+workflows; macOS still requires the user to approve **Add Shortcut**. Doctor and
+capability reports point to the same command when a bridge is missing.
 
 Rich revisions now include referenced attachment/table metadata, so table-only
 changes invalidate stale tokens. Native operations verify original links, text,

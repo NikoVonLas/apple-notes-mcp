@@ -12,6 +12,7 @@
   "files": [
     "build",
     "docs",
+    "shortcuts",
     "README.md",
     "LICENSE"
   ],

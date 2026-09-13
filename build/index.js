@@ -2991,7 +2991,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve2.call(this, root, ref);
+      let _sch = resolve3.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3018,7 +3018,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve2(root, ref) {
+    function resolve3(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3843,7 +3843,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve2(baseURI, relativeURI, options) {
+    function resolve3(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4205,7 +4205,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve2,
+      resolve: resolve3,
       resolveComponent,
       equal,
       serialize,
@@ -36608,7 +36608,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error2) {
@@ -36625,7 +36625,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -36703,7 +36703,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve2(parseResult.data);
+            resolve3(parseResult.data);
           }
         } catch (error2) {
           reject(error2);
@@ -36964,12 +36964,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve2, interval);
+      const timeoutId = setTimeout(resolve3, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -38282,7 +38282,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -38970,12 +38970,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve2();
+        resolve3();
       } else {
-        this._stdout.once("drain", resolve2);
+        this._stdout.once("drain", resolve3);
       }
     });
   }
@@ -42639,305 +42639,12 @@ function describeSearchScope(searchContent, resultCount) {
 
 // src/tools/doctor.ts
 import { spawnSync } from "child_process";
-function runDoctor(manager) {
-  const checks = [];
-  const hc = manager.healthCheck();
-  for (const c of hc.checks) {
-    checks.push({
-      name: `Notes.app: ${c.name}`,
-      status: c.passed ? "ok" : "fail",
-      detail: c.message
-    });
-  }
-  try {
-    const accounts = manager.listAccounts();
-    checks.push({
-      name: "Accounts",
-      status: accounts.length > 0 ? "ok" : "warn",
-      detail: accounts.length > 0 ? `${accounts.length} account(s): ${accounts.map((a) => a.name).join(", ")}` : "no Notes accounts found"
-    });
-  } catch (e) {
-    checks.push({
-      name: "Accounts",
-      status: "fail",
-      detail: `could not list accounts: ${String(e)}`
-    });
-  }
-  const fda = hasFullDiskAccess();
-  checks.push({
-    name: "Full Disk Access",
-    status: fda ? "ok" : "warn",
-    detail: fda ? "granted \u2014 the Notes database is readable (checklist state, note metadata, note links, sync detail)" : `not granted \u2014 get-checklist-state, get-note-metadata, and the checklist annotations in get-note-markdown won't work; get-note-link fails on macOS 26+ (macOS 12-15 falls back to AppleScript); get-sync-status still answers but cannot see pending uploads. Everything else is pure AppleScript and is unaffected. In System Settings > Privacy & Security > Full Disk Access, grant access to the app that launches this server (Claude Desktop / Terminal / iTerm2), then fully quit and relaunch it and re-run doctor. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL}`
-  });
-  checks.push(checkNodeRuntimeSignature());
-  const healthy = !checks.some((c) => c.status === "fail");
-  return { healthy, checks };
-}
-function checkNodeRuntimeSignature() {
-  const name = "Node runtime signature";
-  try {
-    const r = spawnSync("codesign", ["-dvvv", process.execPath], { encoding: "utf8" });
-    const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-    if (r.error || !out.trim()) {
-      return {
-        name,
-        status: "warn",
-        detail: `could not inspect ${process.execPath} with codesign`
-      };
-    }
-    const adhoc = /^Signature=adhoc$/m.test(out) || /^TeamIdentifier=not set$/m.test(out);
-    if (adhoc) {
-      return {
-        name,
-        status: "warn",
-        detail: `${process.execPath} is ad-hoc signed (no Team ID). macOS revokes its Automation and Full Disk Access grants every time the binary changes (e.g. every brew upgrade), which looks like random permission loss. Fix: run the server with a Developer-ID-signed Node at a stable path \u2014 see ${NODE_RUNTIME_TCC_GUIDE_URL}`
-      };
-    }
-    const team = /^TeamIdentifier=(.+)$/m.exec(out)?.[1];
-    return {
-      name,
-      status: "ok",
-      detail: `${process.execPath} has a stable signature${team ? ` (Team ID ${team})` : ""} \u2014 TCC grants persist across updates`
-    };
-  } catch (e) {
-    return { name, status: "warn", detail: `could not inspect node signature: ${String(e)}` };
-  }
-}
-function formatDoctorReport(r) {
-  const icon = (s) => s === "ok" ? "\u2705" : s === "warn" ? "\u26A0\uFE0F " : "\u274C";
-  const lines = [`\u{1FA7A} apple-notes-mcp doctor \u2014 ${r.healthy ? "healthy" : "ISSUES FOUND"}`, ""];
-  for (const c of r.checks) lines.push(`${icon(c.status)} ${c.name}: ${c.detail}`);
-  return lines.join("\n");
-}
-
-// src/services/fileConfig.ts
-import { existsSync as existsSync6, readFileSync as readFileSync2 } from "fs";
-import { join as join7 } from "path";
-import { homedir as homedir7 } from "os";
-function fileConfigPath(env = process.env) {
-  const override = env.APPLE_NOTES_MCP_CONFIG_FILE;
-  if (override && override.trim()) return override.trim();
-  return join7(homedir7(), "Library", "Application Support", "apple-notes-mcp", "config.json");
-}
-function loadFileConfig(env = process.env, path4 = fileConfigPath(env)) {
-  const applied = [];
-  try {
-    if (!existsSync6(path4)) return applied;
-    const parsed = JSON.parse(readFileSync2(path4, "utf8"));
-    if (!parsed || typeof parsed !== "object") return applied;
-    for (const [k, v] of Object.entries(parsed)) {
-      if (typeof v !== "string") continue;
-      if (env[k] === void 0 || env[k] === "") {
-        env[k] = v;
-        applied.push(k);
-      }
-    }
-  } catch (e) {
-    console.error(`Failed to load apple-notes-mcp config file ${path4}: ${String(e)}`);
-  }
-  return applied;
-}
-
-// src/tools/resourcesAndPrompts.ts
-var json = (uri, data) => ({
-  contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(data, null, 2) }]
-});
-function registerResourcesAndPrompts(server2, manager) {
-  server2.resource(
-    "accounts",
-    "notes://accounts",
-    (uri) => json(uri, { accounts: manager.listAccounts() })
-  );
-  server2.resource("folders", "notes://folders", (uri) => {
-    const data = manager.listAccounts().map((a) => ({ account: a.name, folders: manager.listFolders(a.name) }));
-    return json(uri, { accounts: data });
-  });
-  server2.resource("stats", "notes://stats", (uri) => json(uri, manager.getNotesStats()));
-  server2.resource(
-    "note",
-    new ResourceTemplate("notes://note/{id}", { list: void 0 }),
-    (uri, variables) => {
-      const id2 = decodeURIComponent(String(variables.id));
-      const markdown = manager.getNoteMarkdownById(id2);
-      return {
-        contents: [{ uri: uri.href, mimeType: "text/markdown", text: markdown || "(not found)" }]
-      };
-    }
-  );
-  server2.prompt(
-    "find-note",
-    "Search Apple Notes for a topic and summarize the best match",
-    { topic: external_exports.string().describe("What to search for") },
-    ({ topic }) => ({
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: `Search my Apple Notes for "${topic}" with the search-notes tool (set searchContent: true). Open the most relevant result with get-note-content and give me a concise summary plus its note id.`
-          }
-        }
-      ]
-    })
-  );
-  server2.prompt("weekly-review", "Review notes changed recently and surface follow-ups", () => ({
-    messages: [
-      {
-        role: "user",
-        content: {
-          type: "text",
-          text: "Use get-notes-stats to see how many notes changed in the last 7 days, then search-notes (searchContent: true, modifiedSince: the date 7 days ago) to list them. Summarize the themes and call out any open action items or checklists I should follow up on."
-        }
-      }
-    ]
-  }));
-  server2.prompt(
-    "new-meeting-note",
-    "Draft and create a structured meeting note",
-    {
-      subject: external_exports.string().describe("Meeting subject"),
-      attendees: external_exports.string().optional().describe("Comma-separated attendees"),
-      folder: external_exports.string().optional().describe("Target folder")
-    },
-    ({ subject, attendees, folder }) => ({
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: `Create an Apple Note titled "${subject}" ${folder ? `in folder "${folder}" ` : ""}using create-note (format: html). Include sections for Attendees${attendees ? ` (${attendees})` : ""}, Agenda, Discussion, and Action Items. Render Action Items as a plain bulleted list and remind me I can convert it to a checklist in Notes with \u21E7\u2318L.`
-          }
-        }
-      ]
-    })
-  );
-}
-
-// src/utils/jsonSchemaDialect.ts
-var JSON_SCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema";
-var DEFINITIONS_REF_PREFIX = "#/definitions/";
-var SCHEMA_MAP_KEYWORDS = /* @__PURE__ */ new Set([
-  "properties",
-  "patternProperties",
-  "$defs",
-  "dependentSchemas"
-]);
-var DATA_KEYWORDS = /* @__PURE__ */ new Set([
-  "enum",
-  "const",
-  "default",
-  "examples",
-  "required",
-  "dependentRequired"
-]);
-function isPlainObject3(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function convertSchemaMap(node) {
-  if (!isPlainObject3(node)) return node;
-  const out = {};
-  for (const [name, subschema] of Object.entries(node)) out[name] = convertNode(subschema);
-  return out;
-}
-function convertNode(node) {
-  if (Array.isArray(node)) return node.map(convertNode);
-  if (!isPlainObject3(node)) return node;
-  const hasTupleItems = Array.isArray(node.items);
-  const out = {};
-  for (const [key, value] of Object.entries(node)) {
-    switch (key) {
-      case "$schema":
-        break;
-      case "definitions":
-        out.$defs = convertSchemaMap(value);
-        break;
-      case "$ref":
-        out.$ref = typeof value === "string" && value.startsWith(DEFINITIONS_REF_PREFIX) ? "#/$defs/" + value.slice(DEFINITIONS_REF_PREFIX.length) : value;
-        break;
-      case "items":
-        if (hasTupleItems) out.prefixItems = value.map(convertNode);
-        else out.items = convertNode(value);
-        break;
-      case "additionalItems":
-        if (hasTupleItems) out.items = convertNode(value);
-        break;
-      case "dependencies": {
-        const dependentRequired = {};
-        const dependentSchemas = {};
-        if (isPlainObject3(value)) {
-          for (const [property, dependency] of Object.entries(value)) {
-            if (Array.isArray(dependency)) dependentRequired[property] = dependency;
-            else dependentSchemas[property] = convertNode(dependency);
-          }
-        }
-        if (Object.keys(dependentRequired).length > 0) out.dependentRequired = dependentRequired;
-        if (Object.keys(dependentSchemas).length > 0) out.dependentSchemas = dependentSchemas;
-        break;
-      }
-      case "exclusiveMinimum":
-      case "exclusiveMaximum": {
-        const bound = key === "exclusiveMinimum" ? node.minimum : node.maximum;
-        if (value === true && typeof bound === "number") out[key] = bound;
-        else if (value !== false) out[key] = convertNode(value);
-        break;
-      }
-      case "minimum":
-        if (node.exclusiveMinimum === true) break;
-        out.minimum = convertNode(value);
-        break;
-      case "maximum":
-        if (node.exclusiveMaximum === true) break;
-        out.maximum = convertNode(value);
-        break;
-      default:
-        if (DATA_KEYWORDS.has(key)) out[key] = value;
-        else if (SCHEMA_MAP_KEYWORDS.has(key)) out[key] = convertSchemaMap(value);
-        else out[key] = convertNode(value);
-    }
-  }
-  return out;
-}
-function toJsonSchema2020_12(schema) {
-  if (!isPlainObject3(schema)) return schema;
-  return {
-    $schema: JSON_SCHEMA_2020_12,
-    ...convertNode(schema)
-  };
-}
-function normalizeOutgoingMessage(message) {
-  if (!isPlainObject3(message)) return message;
-  const result = message.result;
-  if (!isPlainObject3(result) || !Array.isArray(result.tools)) return message;
-  const tools = result.tools.map((tool) => {
-    if (!isPlainObject3(tool)) return tool;
-    const next = { ...tool };
-    if (isPlainObject3(tool.inputSchema)) next.inputSchema = toJsonSchema2020_12(tool.inputSchema);
-    if (isPlainObject3(tool.outputSchema))
-      next.outputSchema = toJsonSchema2020_12(tool.outputSchema);
-    return next;
-  });
-  return { ...message, result: { ...result, tools } };
-}
-function withJsonSchema2020_12(transport2) {
-  const originalSend = transport2.send.bind(transport2);
-  transport2.send = (message, options) => originalSend(normalizeOutgoingMessage(message), options);
-  return transport2;
-}
-
-// src/utils/noteRevision.ts
-var INLINE_TAG = /^<\/?(?:b|i|u|s|strike|em|strong|span|a|font|sub|sup|code|tt|small|big|mark)\b/i;
-function comparableVisibleText(html) {
-  return html.replace(/<br\s*\/?\s*>/gi, " ").replace(/<[^>]*>/g, (tag) => INLINE_TAG.test(tag) ? "" : " ").replace(/&nbsp;|&#160;/gi, " ").replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&amp;/gi, "&").replace(/&#(\d+);/g, (_match, codePoint) => String.fromCodePoint(Number(codePoint))).replace(
-    /&#x([0-9a-f]+);/gi,
-    (_match, codePoint) => String.fromCodePoint(Number.parseInt(codePoint, 16))
-  ).replace(/\s+/g, " ").trim();
-}
 
 // src/services/nativeTags.ts
 import { execFileSync as execFileSync6 } from "node:child_process";
 import { mkdtempSync as mkdtempSync2, writeFileSync, rmSync as rmSync2 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join8 } from "node:path";
+import { join as join7 } from "node:path";
 var NATIVE_TAGS_SHORTCUT = "Apple Notes MCP - Native Tags";
 function normalizeNativeTags(tags) {
   if (!tags.length || tags.length > 100) throw new Error("Provide between 1 and 100 tags");
@@ -43025,9 +42732,9 @@ function runNativeTagsShortcut(input) {
   const status = nativeTagsStatus();
   if (!status.installed)
     throw new Error(`Import the supplied ${status.shortcut}.shortcut in Shortcuts first`);
-  const directory = mkdtempSync2(join8(tmpdir2(), "apple-notes-native-tags-"));
+  const directory = mkdtempSync2(join7(tmpdir2(), "apple-notes-native-tags-"));
   try {
-    const path4 = join8(directory, "request.json");
+    const path4 = join7(directory, "request.json");
     writeFileSync(path4, JSON.stringify(input), { mode: 384 });
     execFileSync6("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", path4], {
       encoding: "utf8",
@@ -43044,17 +42751,11 @@ function runNativeTagsShortcut(input) {
   }
 }
 
-// src/tools/backgroundOperations.ts
-import { mkdtempSync as mkdtempSync4, writeFileSync as writeFileSync3, rmSync as rmSync4 } from "node:fs";
-import { tmpdir as tmpdir4 } from "node:os";
-import { basename, join as join10 } from "node:path";
-import { createHash as createHash2 } from "node:crypto";
-
 // src/services/backgroundNotes.ts
 import { execFileSync as execFileSync7 } from "node:child_process";
-import { mkdtempSync as mkdtempSync3, writeFileSync as writeFileSync2, rmSync as rmSync3, readFileSync as readFileSync3, statSync as statSync3 } from "node:fs";
+import { mkdtempSync as mkdtempSync3, writeFileSync as writeFileSync2, rmSync as rmSync3, readFileSync as readFileSync2, statSync as statSync3 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join9, isAbsolute as isAbsolute2 } from "node:path";
+import { join as join8, isAbsolute as isAbsolute2 } from "node:path";
 
 // src/utils/appendMarkdown.ts
 var escape2 = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -43105,6 +42806,15 @@ function appendMarkdownHtml(markdown) {
   }
   close();
   return html;
+}
+
+// src/utils/noteRevision.ts
+var INLINE_TAG = /^<\/?(?:b|i|u|s|strike|em|strong|span|a|font|sub|sup|code|tt|small|big|mark)\b/i;
+function comparableVisibleText(html) {
+  return html.replace(/<br\s*\/?\s*>/gi, " ").replace(/<[^>]*>/g, (tag) => INLINE_TAG.test(tag) ? "" : " ").replace(/&nbsp;|&#160;/gi, " ").replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&amp;/gi, "&").replace(/&#(\d+);/g, (_match, codePoint) => String.fromCodePoint(Number(codePoint))).replace(
+    /&#x([0-9a-f]+);/gi,
+    (_match, codePoint) => String.fromCodePoint(Number.parseInt(codePoint, 16))
+  ).replace(/\s+/g, " ").trim();
 }
 
 // src/services/backgroundNotes.ts
@@ -43185,9 +42895,9 @@ function runBackgroundShortcut(input) {
   const status = backgroundStatus();
   if (!status.installed)
     throw new Error("Install the supplied Background Operations shortcut once");
-  const directory = mkdtempSync3(join9(tmpdir3(), "apple-notes-background-"));
+  const directory = mkdtempSync3(join8(tmpdir3(), "apple-notes-background-"));
   try {
-    const file = join9(directory, "request.json");
+    const file = join8(directory, "request.json");
     writeFileSync2(
       file,
       JSON.stringify({
@@ -43395,8 +43105,317 @@ function localAttachment(path4) {
   const stat = statSync3(path4);
   if (!stat.isFile() || stat.size === 0 || stat.size > 64 * 1024 * 1024)
     throw new Error("Attachment must be a regular file of at most 64 MiB");
-  return readFileSync3(path4);
+  return readFileSync2(path4);
 }
+
+// src/tools/doctor.ts
+function runDoctor(manager) {
+  const checks = [];
+  const hc = manager.healthCheck();
+  for (const c of hc.checks) {
+    checks.push({
+      name: `Notes.app: ${c.name}`,
+      status: c.passed ? "ok" : "fail",
+      detail: c.message
+    });
+  }
+  try {
+    const accounts = manager.listAccounts();
+    checks.push({
+      name: "Accounts",
+      status: accounts.length > 0 ? "ok" : "warn",
+      detail: accounts.length > 0 ? `${accounts.length} account(s): ${accounts.map((a) => a.name).join(", ")}` : "no Notes accounts found"
+    });
+  } catch (e) {
+    checks.push({
+      name: "Accounts",
+      status: "fail",
+      detail: `could not list accounts: ${String(e)}`
+    });
+  }
+  const fda = hasFullDiskAccess();
+  checks.push({
+    name: "Full Disk Access",
+    status: fda ? "ok" : "warn",
+    detail: fda ? "granted \u2014 the Notes database is readable (checklist state, note metadata, note links, sync detail)" : `not granted \u2014 get-checklist-state, get-note-metadata, and the checklist annotations in get-note-markdown won't work; get-note-link fails on macOS 26+ (macOS 12-15 falls back to AppleScript); get-sync-status still answers but cannot see pending uploads. Everything else is pure AppleScript and is unaffected. In System Settings > Privacy & Security > Full Disk Access, grant access to the app that launches this server (Claude Desktop / Terminal / iTerm2), then fully quit and relaunch it and re-run doctor. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL}`
+  });
+  try {
+    const bridgeStatuses = [NATIVE_TAGS_SHORTCUT, BACKGROUND_SHORTCUT].map(
+      (name) => nativeTagsStatus(name)
+    );
+    const missing = bridgeStatuses.filter((status) => !status.installed);
+    checks.push({
+      name: "Native write Shortcuts",
+      status: missing.length ? "warn" : "ok",
+      detail: missing.length ? `missing: ${missing.map((status) => status.shortcut).join(", ")}. Run apple-notes-mcp setup and approve Add Shortcut in macOS` : "both native-write bridges are installed"
+    });
+  } catch (error2) {
+    checks.push({
+      name: "Native write Shortcuts",
+      status: "warn",
+      detail: `could not inspect Shortcuts: ${String(error2)}. Run apple-notes-mcp setup --check`
+    });
+  }
+  checks.push(checkNodeRuntimeSignature());
+  const healthy = !checks.some((c) => c.status === "fail");
+  return { healthy, checks };
+}
+function checkNodeRuntimeSignature() {
+  const name = "Node runtime signature";
+  try {
+    const r = spawnSync("codesign", ["-dvvv", process.execPath], { encoding: "utf8" });
+    const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+    if (r.error || !out.trim()) {
+      return {
+        name,
+        status: "warn",
+        detail: `could not inspect ${process.execPath} with codesign`
+      };
+    }
+    const adhoc = /^Signature=adhoc$/m.test(out) || /^TeamIdentifier=not set$/m.test(out);
+    if (adhoc) {
+      return {
+        name,
+        status: "warn",
+        detail: `${process.execPath} is ad-hoc signed (no Team ID). macOS revokes its Automation and Full Disk Access grants every time the binary changes (e.g. every brew upgrade), which looks like random permission loss. Fix: run the server with a Developer-ID-signed Node at a stable path \u2014 see ${NODE_RUNTIME_TCC_GUIDE_URL}`
+      };
+    }
+    const team = /^TeamIdentifier=(.+)$/m.exec(out)?.[1];
+    return {
+      name,
+      status: "ok",
+      detail: `${process.execPath} has a stable signature${team ? ` (Team ID ${team})` : ""} \u2014 TCC grants persist across updates`
+    };
+  } catch (e) {
+    return { name, status: "warn", detail: `could not inspect node signature: ${String(e)}` };
+  }
+}
+function formatDoctorReport(r) {
+  const icon = (s) => s === "ok" ? "\u2705" : s === "warn" ? "\u26A0\uFE0F " : "\u274C";
+  const lines = [`\u{1FA7A} apple-notes-mcp doctor \u2014 ${r.healthy ? "healthy" : "ISSUES FOUND"}`, ""];
+  for (const c of r.checks) lines.push(`${icon(c.status)} ${c.name}: ${c.detail}`);
+  return lines.join("\n");
+}
+
+// src/services/fileConfig.ts
+import { existsSync as existsSync6, readFileSync as readFileSync3 } from "fs";
+import { join as join9 } from "path";
+import { homedir as homedir7 } from "os";
+function fileConfigPath(env = process.env) {
+  const override = env.APPLE_NOTES_MCP_CONFIG_FILE;
+  if (override && override.trim()) return override.trim();
+  return join9(homedir7(), "Library", "Application Support", "apple-notes-mcp", "config.json");
+}
+function loadFileConfig(env = process.env, path4 = fileConfigPath(env)) {
+  const applied = [];
+  try {
+    if (!existsSync6(path4)) return applied;
+    const parsed = JSON.parse(readFileSync3(path4, "utf8"));
+    if (!parsed || typeof parsed !== "object") return applied;
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v !== "string") continue;
+      if (env[k] === void 0 || env[k] === "") {
+        env[k] = v;
+        applied.push(k);
+      }
+    }
+  } catch (e) {
+    console.error(`Failed to load apple-notes-mcp config file ${path4}: ${String(e)}`);
+  }
+  return applied;
+}
+
+// src/tools/resourcesAndPrompts.ts
+var json = (uri, data) => ({
+  contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(data, null, 2) }]
+});
+function registerResourcesAndPrompts(server2, manager) {
+  server2.resource(
+    "accounts",
+    "notes://accounts",
+    (uri) => json(uri, { accounts: manager.listAccounts() })
+  );
+  server2.resource("folders", "notes://folders", (uri) => {
+    const data = manager.listAccounts().map((a) => ({ account: a.name, folders: manager.listFolders(a.name) }));
+    return json(uri, { accounts: data });
+  });
+  server2.resource("stats", "notes://stats", (uri) => json(uri, manager.getNotesStats()));
+  server2.resource(
+    "note",
+    new ResourceTemplate("notes://note/{id}", { list: void 0 }),
+    (uri, variables) => {
+      const id2 = decodeURIComponent(String(variables.id));
+      const markdown = manager.getNoteMarkdownById(id2);
+      return {
+        contents: [{ uri: uri.href, mimeType: "text/markdown", text: markdown || "(not found)" }]
+      };
+    }
+  );
+  server2.prompt(
+    "find-note",
+    "Search Apple Notes for a topic and summarize the best match",
+    { topic: external_exports.string().describe("What to search for") },
+    ({ topic }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Search my Apple Notes for "${topic}" with the search-notes tool (set searchContent: true). Open the most relevant result with get-note-content and give me a concise summary plus its note id.`
+          }
+        }
+      ]
+    })
+  );
+  server2.prompt("weekly-review", "Review notes changed recently and surface follow-ups", () => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: "Use get-notes-stats to see how many notes changed in the last 7 days, then search-notes (searchContent: true, modifiedSince: the date 7 days ago) to list them. Summarize the themes and call out any open action items or checklists I should follow up on."
+        }
+      }
+    ]
+  }));
+  server2.prompt(
+    "new-meeting-note",
+    "Draft and create a structured meeting note",
+    {
+      subject: external_exports.string().describe("Meeting subject"),
+      attendees: external_exports.string().optional().describe("Comma-separated attendees"),
+      folder: external_exports.string().optional().describe("Target folder")
+    },
+    ({ subject, attendees, folder }) => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `Create an Apple Note titled "${subject}" ${folder ? `in folder "${folder}" ` : ""}using create-note (format: html). Include sections for Attendees${attendees ? ` (${attendees})` : ""}, Agenda, Discussion, and Action Items. Render Action Items as a plain bulleted list and remind me I can convert it to a checklist in Notes with \u21E7\u2318L.`
+          }
+        }
+      ]
+    })
+  );
+}
+
+// src/utils/jsonSchemaDialect.ts
+var JSON_SCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema";
+var DEFINITIONS_REF_PREFIX = "#/definitions/";
+var SCHEMA_MAP_KEYWORDS = /* @__PURE__ */ new Set([
+  "properties",
+  "patternProperties",
+  "$defs",
+  "dependentSchemas"
+]);
+var DATA_KEYWORDS = /* @__PURE__ */ new Set([
+  "enum",
+  "const",
+  "default",
+  "examples",
+  "required",
+  "dependentRequired"
+]);
+function isPlainObject3(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function convertSchemaMap(node) {
+  if (!isPlainObject3(node)) return node;
+  const out = {};
+  for (const [name, subschema] of Object.entries(node)) out[name] = convertNode(subschema);
+  return out;
+}
+function convertNode(node) {
+  if (Array.isArray(node)) return node.map(convertNode);
+  if (!isPlainObject3(node)) return node;
+  const hasTupleItems = Array.isArray(node.items);
+  const out = {};
+  for (const [key, value] of Object.entries(node)) {
+    switch (key) {
+      case "$schema":
+        break;
+      case "definitions":
+        out.$defs = convertSchemaMap(value);
+        break;
+      case "$ref":
+        out.$ref = typeof value === "string" && value.startsWith(DEFINITIONS_REF_PREFIX) ? "#/$defs/" + value.slice(DEFINITIONS_REF_PREFIX.length) : value;
+        break;
+      case "items":
+        if (hasTupleItems) out.prefixItems = value.map(convertNode);
+        else out.items = convertNode(value);
+        break;
+      case "additionalItems":
+        if (hasTupleItems) out.items = convertNode(value);
+        break;
+      case "dependencies": {
+        const dependentRequired = {};
+        const dependentSchemas = {};
+        if (isPlainObject3(value)) {
+          for (const [property, dependency] of Object.entries(value)) {
+            if (Array.isArray(dependency)) dependentRequired[property] = dependency;
+            else dependentSchemas[property] = convertNode(dependency);
+          }
+        }
+        if (Object.keys(dependentRequired).length > 0) out.dependentRequired = dependentRequired;
+        if (Object.keys(dependentSchemas).length > 0) out.dependentSchemas = dependentSchemas;
+        break;
+      }
+      case "exclusiveMinimum":
+      case "exclusiveMaximum": {
+        const bound = key === "exclusiveMinimum" ? node.minimum : node.maximum;
+        if (value === true && typeof bound === "number") out[key] = bound;
+        else if (value !== false) out[key] = convertNode(value);
+        break;
+      }
+      case "minimum":
+        if (node.exclusiveMinimum === true) break;
+        out.minimum = convertNode(value);
+        break;
+      case "maximum":
+        if (node.exclusiveMaximum === true) break;
+        out.maximum = convertNode(value);
+        break;
+      default:
+        if (DATA_KEYWORDS.has(key)) out[key] = value;
+        else if (SCHEMA_MAP_KEYWORDS.has(key)) out[key] = convertSchemaMap(value);
+        else out[key] = convertNode(value);
+    }
+  }
+  return out;
+}
+function toJsonSchema2020_12(schema) {
+  if (!isPlainObject3(schema)) return schema;
+  return {
+    $schema: JSON_SCHEMA_2020_12,
+    ...convertNode(schema)
+  };
+}
+function normalizeOutgoingMessage(message) {
+  if (!isPlainObject3(message)) return message;
+  const result = message.result;
+  if (!isPlainObject3(result) || !Array.isArray(result.tools)) return message;
+  const tools = result.tools.map((tool) => {
+    if (!isPlainObject3(tool)) return tool;
+    const next = { ...tool };
+    if (isPlainObject3(tool.inputSchema)) next.inputSchema = toJsonSchema2020_12(tool.inputSchema);
+    if (isPlainObject3(tool.outputSchema))
+      next.outputSchema = toJsonSchema2020_12(tool.outputSchema);
+    return next;
+  });
+  return { ...message, result: { ...result, tools } };
+}
+function withJsonSchema2020_12(transport2) {
+  const originalSend = transport2.send.bind(transport2);
+  transport2.send = (message, options) => originalSend(normalizeOutgoingMessage(message), options);
+  return transport2;
+}
+
+// src/tools/backgroundOperations.ts
+import { mkdtempSync as mkdtempSync4, writeFileSync as writeFileSync3, rmSync as rmSync4 } from "node:fs";
+import { tmpdir as tmpdir4 } from "node:os";
+import { basename, join as join10 } from "node:path";
+import { createHash as createHash2 } from "node:crypto";
 
 // src/utils/noteTables.ts
 import { gunzipSync as gunzipSync3 } from "node:zlib";
@@ -43608,7 +43627,7 @@ function registerBackgroundOperations(server2, manager) {
               implemented: true,
               verified: VERIFIED_BACKGROUND.has(name),
               available: VERIFIED_BACKGROUND.has(name) && (!native.includes(name) || bridge.installed) && (name !== "replace-native-tag" || tagBridgeInstalled),
-              reason: !VERIFIED_BACKGROUND.has(name) ? UNAVAILABLE[name] || LIVE_VALIDATION_BLOCKERS[name] || "Live validation pending; install the shortcut and complete the isolated acceptance tests" : native.includes(name) && !bridge.installed ? "Install the supplied shortcut once" : name === "replace-native-tag" && !tagBridgeInstalled ? "Install the verified Native Tags bridge for the addition phase" : void 0
+              reason: !VERIFIED_BACKGROUND.has(name) ? UNAVAILABLE[name] || LIVE_VALIDATION_BLOCKERS[name] || "Live validation pending; install the shortcut and complete the isolated acceptance tests" : native.includes(name) && !bridge.installed ? "Run apple-notes-mcp setup and approve Add Shortcut in macOS" : name === "replace-native-tag" && !tagBridgeInstalled ? "Run apple-notes-mcp setup to install the Native Tags bridge for the addition phase" : void 0
             }
           ])
         ),
@@ -44026,10 +44045,77 @@ function registerBackgroundOperations(server2, manager) {
   );
 }
 
+// src/setupShortcuts.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+import { existsSync as existsSync7 } from "node:fs";
+import { dirname as dirname2, resolve as resolve2 } from "node:path";
+import { fileURLToPath } from "node:url";
+var shortcutFiles = [
+  { name: NATIVE_TAGS_SHORTCUT, file: "Apple Notes MCP - Native Tags.shortcut" },
+  {
+    name: BACKGROUND_SHORTCUT,
+    file: "Apple Notes MCP - Background Operations v5.shortcut"
+  }
+];
+function setupShortcuts(checkOnly, dependencies = {}) {
+  const status = dependencies.status || nativeTagsStatus;
+  const exists = dependencies.exists || existsSync7;
+  const open = dependencies.open || ((path4) => {
+    const result = spawnSync2("/usr/bin/open", [path4], { encoding: "utf8" });
+    return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
+  });
+  const baseDirectory = dependencies.baseDirectory || resolve2(dirname2(fileURLToPath(import.meta.url)), "../shortcuts");
+  const items = shortcutFiles.map(({ name, file }) => {
+    const path4 = resolve2(baseDirectory, file);
+    let installed = false;
+    let identifier;
+    let error2;
+    try {
+      const current = status(name);
+      installed = current.installed;
+      identifier = current.identifier;
+    } catch (cause) {
+      error2 = cause instanceof Error ? cause.message : String(cause);
+    }
+    let opened = false;
+    if (!installed && !checkOnly) {
+      if (!exists(path4)) error2 = `Packaged Shortcut is missing: ${path4}`;
+      else {
+        const result = open(path4);
+        opened = result.ok;
+        if (!result.ok) error2 = result.error || `Could not open ${file}`;
+      }
+    }
+    return { name, installed, identifier, file: path4, opened, ...error2 ? { error: error2 } : {} };
+  });
+  return { ready: items.every((item) => item.installed), checkOnly, items };
+}
+function formatShortcutSetup(report) {
+  const lines = ["Apple Notes MCP Shortcut setup", ""];
+  for (const item of report.items) {
+    if (item.installed) lines.push(`\u2713 ${item.name} (${item.identifier})`);
+    else if (item.opened) lines.push(`\u2192 ${item.name}: confirm \u201CAdd Shortcut\u201D in macOS`);
+    else lines.push(`\u2717 ${item.name}: ${item.error || "not installed"}`);
+  }
+  lines.push("");
+  if (report.ready) lines.push("Both Shortcut bridges are installed.");
+  else if (report.checkOnly) lines.push("Run `apple-notes-mcp setup` to open missing workflows.");
+  else
+    lines.push(
+      "After approving the macOS dialogs, run `apple-notes-mcp setup --check` or the MCP doctor tool."
+    );
+  return lines.join("\n");
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
 var { version: version2 } = require2("../package.json");
+if (process.argv[2] === "setup") {
+  const report = setupShortcuts(process.argv.slice(3).includes("--check"));
+  process.stdout.write(formatShortcutSetup(report) + "\n");
+  process.exit(report.ready || !report.checkOnly ? 0 : 1);
+}
 var server = new McpServer({
   name: "apple-notes",
   version: version2,
@@ -44596,8 +44682,8 @@ registerTool(
   withErrorHandling(() => {
     const status = nativeTagsStatus();
     return successResponse(
-      status.installed ? "Native tagging Shortcut is installed" : "Import the supplied Native Tags shortcut first",
-      status
+      status.installed ? "Native tagging Shortcut is installed" : "Run apple-notes-mcp setup and approve Add Shortcut in macOS",
+      status.installed ? status : { ...status, setupCommand: "apple-notes-mcp setup" }
     );
   }, "Error checking native tags")
 );

@@ -6,6 +6,15 @@ the tools listed below exist on that baseline, except `get-note-link`, which
 already returns a deep link for one note but does not restore links embedded in
 note content.
 
+Prepared local branches, stacked in dependency order:
+
+1. `upstream/pr-01-rich-content` — `477b051`
+2. `upstream/pr-02-native-inspection` — `1c2fc21`
+3. `upstream/pr-03-direct-operations` — `0df0d2d`
+4. `upstream/pr-04-native-tags` — `46dfd2c`
+5. `upstream/pr-05-native-editing` — `c65cdc4`
+6. `upstream/pr-06-shortcut-setup` — `eb49fc9`
+
 ## No Shortcut installation
 
 ### 1. Preserve rich note content

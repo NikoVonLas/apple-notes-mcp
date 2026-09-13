@@ -158,9 +158,9 @@ export function registerBackgroundOperations(server: McpServer, manager: AppleNo
                   LIVE_VALIDATION_BLOCKERS[name] ||
                   "Live validation pending; install the shortcut and complete the isolated acceptance tests"
                 : native.includes(name) && !bridge.installed
-                  ? "Install the supplied shortcut once"
+                  ? "Run apple-notes-mcp setup and approve Add Shortcut in macOS"
                   : name === "replace-native-tag" && !tagBridgeInstalled
-                    ? "Install the verified Native Tags bridge for the addition phase"
+                    ? "Run apple-notes-mcp setup to install the Native Tags bridge for the addition phase"
                     : undefined,
             },
           ])

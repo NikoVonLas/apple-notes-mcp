@@ -11,6 +11,9 @@
   native object/table inspection.
 - Generated and signed Background Operations v5 Shortcut with fixed operation
   allowlisting and exact title/scope selection.
+- Explicit `apple-notes-mcp setup` and read-only `setup --check` commands that
+  detect both packaged bridges and open only missing workflows for required
+  macOS approval. Doctor and capability output point to the same setup flow.
 
 ### Fixed
 
