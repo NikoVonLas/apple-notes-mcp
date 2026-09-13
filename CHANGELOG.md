@@ -1,5 +1,91 @@
 ## [Unreleased]
 
+## [2.9.0] - 2026-09-13
+
+### Added
+
+- Background-only native append for plaintext, semantic HTML and bounded
+  Markdown, with exact-ID/revision guards and rich-content preservation checks.
+- Native checklist-item and table creation, explicit pin/unpin, real Apple Notes
+  link insertion, native tag operations, folder rename, attachment insertion and
+  native object/table inspection.
+- Generated and signed Background Operations v5 Shortcut with fixed operation
+  allowlisting and exact title/scope selection.
+
+### Fixed
+
+- Restored links and native tags from Notes rich data so ordinary reads and
+  Markdown exports do not silently lose relationships.
+- Avoided false append failures caused by Notes regenerating nonvisual paragraph
+  UUIDs, retaining layout/checklist fields in preservation checks.
+- Verified appended HTML links with normalized character-to-URL signatures and
+  visible text from Notes HTML, including native hashtag object ranges.
+
+### Changed
+
+- Integrated upstream 2.8.4, including the shared AppleScript permission
+  classifier, inline-tag readback normalization and dependency security updates.
+- Full-body rewrites remain blocked for notes with native objects; native writes
+  use Shortcuts and readback instead of UI automation or direct database writes.
+
+## [2.8.4] - 2026-09-10
+
+### Fixed
+- `update-note` / `append-to-note` no longer report a spurious "readback visible
+  text did not match" for a write that actually succeeded (#145). Notes.app
+  **merges adjacent inline runs of the same style** when it saves — verified
+  against Notes.app on 2026-09-10, where `<b>merge</b><b>me</b>` is stored as
+  `<b>mergeme</b>`. `comparableVisibleText` replaced *every* tag with a space, so
+  the written side normalised to `merge me` while the readback normalised to
+  `mergeme`, and the verifier failed a successful write with an error telling the
+  user not to retry and to inspect the note by hand.
+  Inline tags now collapse to nothing rather than a space, which also matches how
+  the markup actually renders — `<b>foo</b><b>bar</b>` shows as `foobar`, so the
+  old transform mis-described the written side too. The change is an allow-list of
+  tags that are non-separating by definition; `div`, `p`, `li`, headings, table
+  cells, `<br>` and any unrecognised tag still separate words exactly as before.
+
+### Documentation
+- #145's other reported edge case — the linefeed-tolerant conflict guard masking a
+  concurrent one-linefeed edit — was investigated against Notes.app and **refuted**.
+  Notes normalises trailing linefeeds: a body set to `X`, `X\n` or `X\n\n` all read
+  back as exactly `X\n`. There is therefore no distinct "differs by one trailing
+  linefeed" state for the tolerance to mask, and the guard is sound as written.
+
+## [2.8.3] - 2026-09-09
+
+### Fixed
+
+- **A genuine Automation refusal was not recognised on a non-US-English Mac,
+  and three separate copies of the check could each drift from the others.**
+  macOS emits the TCC refusal in the system language: an `en_GB` / `en_AU` /
+  `en_IE` Mac says `Not authorised to send Apple events to Notes. (-1743)`,
+  which the American-only `not authorized` spelling never matched. The
+  consequences on those locales: `health-check` reported
+  `permissions: passed: true` on a real denial and then misdirected the user to
+  configure accounts they already had, and the error mapping never normalised
+  the refusal to the remediation message — so nobody outside `en_US` was ever
+  told to grant automation access.
+
+  Structurally, the same knowledge lived in three independent places — an
+  inline literal inside `ERROR_MAPPINGS`, and two raw `.includes()` substring
+  checks in `healthCheck` — and the health-check copies re-tested substrings
+  that the mapping had already *replaced*, so each was free to drift from the
+  mapping and from the OS. `src/utils/applescript.ts` now exports a single
+  `PERMISSION_DENIED_PATTERN`, the matching `PERMISSION_DENIED_MESSAGE`, and an
+  `isPermissionDenied()` helper that deliberately accepts **both** the raw
+  AppleScript text and the normalised message, so a caller cannot be caught out
+  by which side of the mapping it reads. `ERROR_MAPPINGS` and both
+  `healthCheck` call sites now run that one classifier.
+
+  The pattern is `/not author(?:i[sz])ed|not permitted|access.*denied|\(-1743\)/i`.
+  `-1743` is `errAEEventNotPermitted`, which AppleScript reports **regardless of
+  system language** — it is the only signal that classifies a fully localised
+  (fr/de/es) refusal no English regex can match, and classification runs against
+  the raw osascript output because the `execution error:` extraction strips that
+  trailing code. Same class of bug as `sweetrb/apple-mail-mcp#218`, found by
+  extension; this repo additionally never received mail's structural fix.
+
 ## [2.8.2] - 2026-09-03
 
 ### Security

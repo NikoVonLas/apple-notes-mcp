@@ -1,9 +1,9 @@
 # Version: 2.9.0
 
 Version 2.9.0 was live-validated on 2026-09-13 with the installed Background
-Operations v5 bridge. It keeps local.4's folder, attachment, tag and native
-inspection tools and enables native append, checklist creation, table creation,
-pinning and static Notes-link insertion.
+Operations v5 bridge and includes upstream 2.8.4. It keeps the fork's folder,
+attachment, tag and native inspection tools and enables native append, checklist
+creation, table creation, pinning and static Notes-link insertion.
 
 Live checks on 2026-09-05 verified folder rename with unchanged folder/note IDs,
 file insertion with exact fetched bytes, and native table decoding with Cyrillic
@@ -17,7 +17,7 @@ objects and links. A project-note write also confirmed the native-tag edge case:
 appended visible text is verified from Notes HTML while rich objects and links
 remain independently checked. Temporary diagnostic notes are removed after validation.
 
-The final suite passes all 671 tests. Bridge-generator tests, TypeScript,
+The merged suite passes all 689 tests. Bridge-generator tests, TypeScript,
 ESLint and the production bundle build also pass. File insertion deduplicates
 repeated references to the same native attachment ID before verifying bytes.
 Native table/attachment deletion failed in both supported routes on this macOS
